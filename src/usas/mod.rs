@@ -1,3 +1,6 @@
+use std::error::Error;
+
+use chrono::offset::Local;
 use chrono::{Duration, NaiveDate};
 use serde_json::json;
 
@@ -31,8 +34,8 @@ impl Default for TopTimesRequest {
             distance: 50,
             stroke: Stroke::All,
             course: Course::All,
-            from_date: chrono::offset::Local::now().naive_local().date() - Duration::weeks(1),
-            to_date: chrono::offset::Local::now().naive_local().date(),
+            from_date: Local::now().naive_local().date() - Duration::weeks(1),
+            to_date: Local::now().naive_local().date(),
             start_age: None,
             end_age: None,
             zone: Zone::All,
@@ -50,7 +53,7 @@ pub struct USASClient {
 }
 
 impl USASClient {
-    pub async fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new() -> Result<Self, Box<dyn Error>> {
         let http_client = reqwest::Client::builder().cookie_store(true).build()?;
         http_client
             .get(format!(
@@ -62,10 +65,7 @@ impl USASClient {
         Ok(USASClient { http_client })
     }
 
-    pub async fn top_times_raw(
-        &self,
-        request: TopTimesRequest,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    pub async fn top_times_raw(&self, request: TopTimesRequest) -> Result<String, Box<dyn Error>> {
         let start_age = match request.start_age {
             Some(age) => age.to_string(),
             None => "All".to_string(),
@@ -146,7 +146,7 @@ impl USASClient {
     }
 }
 
-pub async fn test_fn() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test_fn() -> Result<(), Box<dyn Error>> {
     let usas_client = USASClient::new().await?;
 
     let top_times_req = TopTimesRequest {
@@ -154,8 +154,8 @@ pub async fn test_fn() -> Result<(), Box<dyn std::error::Error>> {
         distance: 50,
         stroke: Stroke::FR,
         course: Course::LCM,
-        from_date: chrono::NaiveDate::from_ymd(2021, 01, 01),
-        to_date: chrono::offset::Local::now().naive_local().date(),
+        from_date: NaiveDate::from_ymd(2021, 01, 01),
+        to_date: Local::now().naive_local().date(),
         start_age: Some(20),
         end_age: Some(25),
         zone: Zone::All,

@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::error::Error;
 
 use clap::clap_app;
 
 mod usas;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let matches = clap_app!(app =>
         (name: "swimrs")
         (version: "1.0")
@@ -24,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn hello() -> Result<(), Box<dyn std::error::Error>> {
+async fn hello() -> Result<(), Box<dyn Error>> {
     let resp = reqwest::get("https://httpbin.org/ip")
         .await?
         .json::<HashMap<String, String>>()
