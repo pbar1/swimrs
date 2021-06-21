@@ -4,7 +4,7 @@ use chrono::offset::Local;
 use chrono::{Duration, NaiveDate};
 use serde_json::json;
 
-use model::{Course, Gender, Stroke, TimeType, Zone, LSC};
+use self::model::{Course, Gender, Stroke, TimeType, Zone, LSC};
 
 pub mod model;
 
