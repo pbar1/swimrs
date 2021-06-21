@@ -135,13 +135,12 @@ impl USASClient {
             .http_client
             .post(req_url)
             .form(&params)
-            .header("Cookie", r"BIGipServerPRODSFWEB_8085=!YZ5/13qbW3guCVguG6oy9/Z1oPNqRCW7wZjp6dwImlK28cIHX0po2nl/J37JkYWL4Kp6E0q0bew+jlQ=; sf-trckngckie=b0e400a3-f19c-4781-936f-0c548a1830d7; ASP.NET_SessionId=0ipn3yjw3q5l2y00izn5clpj; AKA_A2=A")
+            .header("Cookie", r"BIGipServerPRODSFWEB_8085=!YZ5/13qbW3guCVguG6oy9/Z1oPNqRCW7wZjp6dwImlK28cIHX0po2nl/J37JkYWL4Kp6E0q0bew+jlQ=; sf-trckngckie=b0e400a3-f19c-4781-936f-0c548a1830d7; ASP.NET_SessionId=0ipn3yjw3q5l2y00izn5clpj; AKA_A2=A") // TODO: fetch this dynamically
             .send()
             .await?
             .text()
             .await?;
 
-        // Ok(resp)
         let re = Regex::new(r"data: (\[.*])")?;
         let caps = re.captures(resp.as_str()).unwrap();
         let output = caps.get(1).map_or("", |m| m.as_str());
