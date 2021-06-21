@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::usas::TopTimesRequest;
 use clap::clap_app;
 
 mod usas;
