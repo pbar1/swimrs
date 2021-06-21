@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::error::Error;
 
 use chrono::offset::Local;
 use chrono::{Duration, NaiveDate};
+use regex::Regex;
 use serde_json::json;
 
 use self::model::{Course, Gender, Stroke, TimeType, Zone, LSC};
@@ -10,21 +12,49 @@ pub mod model;
 
 const BASE_URL: &str = "https://www.usaswimming.org";
 
+pub struct IndividualTimesRequest<'a> {
+    first_name: &'a str,
+    last_name: &'a str,
+    from_date: NaiveDate,
+    to_date: NaiveDate,
+    distance: u16,
+    stroke: Stroke,
+    course: Course,
+    start_age: Option<u8>,
+    end_age: Option<u8>,
+}
+
+impl Default for IndividualTimesRequest<'_> {
+    fn default() -> IndividualTimesRequest<'static> {
+        IndividualTimesRequest {
+            first_name: "*",
+            last_name: "*",
+            from_date: Local::now().naive_local().date() - Duration::days(365),
+            to_date: Local::now().naive_local().date(),
+            distance: 0,
+            stroke: Stroke::All,
+            course: Course::All,
+            start_age: None,
+            end_age: None,
+        }
+    }
+}
+
 pub struct TopTimesRequest {
-    pub(crate) gender: Gender,
-    pub(crate) distance: u16,
-    pub(crate) stroke: Stroke,
-    pub(crate) course: Course,
-    pub(crate) from_date: NaiveDate,
-    pub(crate) to_date: NaiveDate,
-    pub(crate) start_age: Option<u8>,
-    pub(crate) end_age: Option<u8>,
-    pub(crate) zone: Zone,
-    pub(crate) lscs: Vec<LSC>,
-    pub(crate) time_type: TimeType,
-    pub(crate) members_only: bool,
-    pub(crate) best_only: bool,
-    pub(crate) max_results: u16,
+    gender: Gender,
+    distance: u16,
+    stroke: Stroke,
+    course: Course,
+    from_date: NaiveDate,
+    to_date: NaiveDate,
+    start_age: Option<u8>,
+    end_age: Option<u8>,
+    zone: Zone,
+    lscs: Vec<LSC>,
+    time_type: TimeType,
+    members_only: bool,
+    best_only: bool,
+    max_results: u16,
 }
 
 impl Default for TopTimesRequest {
@@ -63,6 +93,60 @@ impl USASClient {
             .send()
             .await?;
         Ok(USASClient { http_client })
+    }
+
+    pub async fn individual_times_raw(
+        &self,
+        req: IndividualTimesRequest<'_>,
+    ) -> Result<String, Box<dyn Error>> {
+        let start_age = match req.start_age {
+            Some(age) => age.to_string(),
+            None => "All".to_string(),
+        };
+        let end_age = match req.end_age {
+            Some(age) => age.to_string(),
+            None => "All".to_string(),
+        };
+        let from_date = req.from_date.format("%-m/%-d/%Y").to_string();
+        let to_date = req.to_date.format("%-m/%-d/%Y").to_string();
+        let distance_id = req.distance.to_string();
+        let stroke_id = (req.stroke as u8).to_string();
+        let course_id = (req.course as u8).to_string();
+
+        let mut params = HashMap::new();
+        params.insert("DivId", "Times_TimesSearchDetail_Index_Div-1");
+        params.insert("FirstName", req.first_name);
+        params.insert("LastName", req.last_name);
+        params.insert("PersonId", "");
+        params.insert("FromDate", from_date.as_str());
+        params.insert("ToDate", to_date.as_str());
+        params.insert("DateRangeId", "0");
+        params.insert("DistanceId", distance_id.as_str());
+        params.insert("StrokeId", stroke_id.as_str());
+        params.insert("CourseId", course_id.as_str());
+        params.insert("StartAge", start_age.as_str());
+        params.insert("EndAge", end_age.as_str());
+        params.insert("SelectedAgeFilter", "All");
+        params.insert("SortPeopleBy", "Name");
+        params.insert("SortTimesBy", "EventSortOrder");
+
+        let req_url = format!("{}{}", BASE_URL, "/api/Times_TimesSearchDetail/ListTimes");
+        let resp = self
+            .http_client
+            .post(req_url)
+            .form(&params)
+            .header("Cookie", r"BIGipServerPRODSFWEB_8085=!YZ5/13qbW3guCVguG6oy9/Z1oPNqRCW7wZjp6dwImlK28cIHX0po2nl/J37JkYWL4Kp6E0q0bew+jlQ=; sf-trckngckie=b0e400a3-f19c-4781-936f-0c548a1830d7; ASP.NET_SessionId=0ipn3yjw3q5l2y00izn5clpj; AKA_A2=A")
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        // Ok(resp)
+        let re = Regex::new(r"data: (\[.*])")?;
+        let caps = re.captures(resp.as_str()).unwrap();
+        let output = caps.get(1).map_or("", |m| m.as_str());
+
+        Ok(output.to_string())
     }
 
     pub async fn top_times_raw(&self, request: TopTimesRequest) -> Result<String, Box<dyn Error>> {
@@ -146,7 +230,25 @@ impl USASClient {
     }
 }
 
-pub async fn test_fn() -> Result<(), Box<dyn Error>> {
+pub async fn example_individual_times() -> Result<(), Box<dyn Error>> {
+    let usas_client = USASClient::new().await?;
+
+    let req = IndividualTimesRequest {
+        first_name: "Ryan",
+        last_name: "Lochte",
+        from_date: NaiveDate::from_ymd(2016, 1, 1),
+        to_date: NaiveDate::from_ymd(2016, 12, 30),
+        ..IndividualTimesRequest::default()
+    };
+
+    let output = usas_client.individual_times_raw(req).await?;
+
+    println!("{}", output);
+
+    Ok(())
+}
+
+pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
     let usas_client = USASClient::new().await?;
 
     let top_times_req = TopTimesRequest {

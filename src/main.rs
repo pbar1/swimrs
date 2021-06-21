@@ -13,14 +13,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         (author: "Pierce Bartine (pbar)")
         (about: "Swimming times data retrieval utility")
         (@setting SubcommandRequiredElseHelp)
-        (@subcommand test =>
-            (about: "Testing function")
+        (@subcommand toptimes =>
+            (about: "Top Times / Event Rank Search")
+        )
+        (@subcommand indtimes =>
+            (about: "Individual Times Search")
         )
     )
     .get_matches();
 
     match matches.subcommand_name() {
-        Some("test") => usas::test_fn().await,
+        Some("toptimes") => usas::example_top_times().await,
+        Some("indtimes") => usas::example_individual_times().await,
         _ => panic!("impossible!"),
     }
 }
