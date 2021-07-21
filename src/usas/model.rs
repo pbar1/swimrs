@@ -1,11 +1,19 @@
-#[derive(strum::Display)]
+use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
+
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Gender {
+    #[serde(rename = "Male")]
     Male,
+
+    #[serde(rename = "Female")]
     Female,
+
+    #[serde(rename = "Mixed")]
     Mixed,
 }
 
-#[derive(strum::Display)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Stroke {
     All = 0,
     FR = 1,
@@ -17,7 +25,7 @@ pub enum Stroke {
     MED_R = 7,
 }
 
-#[derive(strum::Display)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Course {
     All = 0,
     LCM = 1,
@@ -25,7 +33,7 @@ pub enum Course {
     SCY = 3,
 }
 
-#[derive(strum::Display)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Zone {
     All = 0,
     Central = 1,
@@ -35,12 +43,12 @@ pub enum Zone {
 }
 
 // TODO: implement rest of the LSCs
-#[derive(strum::Display)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum LSC {
     All,
 }
 
-#[derive(strum::Display)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum TimeType {
     Individual,
     Relay,
