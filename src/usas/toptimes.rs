@@ -159,49 +159,49 @@ impl TryFrom<TopTimeRaw> for TopTime {
     }
 }
 
-impl TopTimesRequest {
-    fn to_value(&self) -> Value {
-        let start_age = match self.start_age {
+impl From<TopTimesRequest> for Value {
+    fn from(req: TopTimesRequest) -> Self {
+        let start_age = match req.start_age {
             Some(age) => age.to_string(),
             None => String::from("All"),
         };
-        let end_age = match self.end_age {
+        let end_age = match req.end_age {
             Some(age) => age.to_string(),
             None => String::from("All"),
         };
-        let members_only = match self.members_only {
+        let members_only = match req.members_only {
             true => "Yes",
             false => "No",
         };
-        let best_only = match self.best_only {
+        let best_only = match req.best_only {
             true => "Best",
             false => "All",
         };
-        let from_date = self.from_date.format("%-m/%-d/%Y").to_string();
-        let to_date = self.to_date.format("%-m/%-d/%Y").to_string();
+        let from_date = req.from_date.format("%-m/%-d/%Y").to_string();
+        let to_date = req.to_date.format("%-m/%-d/%Y").to_string();
         let value = json!({
             "DivId": "Times_TimesSearchTopTimesEventRankSearch_Index_Div-1",  // constant value
             "DateRangeId": "0",  // set to 0 to disable preset date range and instead use from/to dates
             "FromDate": from_date,
             "ToDate": to_date,
-            "TimeType": self.time_type.to_string(),
-            "DistanceId": self.distance,
-            "StrokeId": self.stroke as u8,
-            "CourseId": self.course as u8,
+            "TimeType": req.time_type.to_string(),
+            "DistanceId": req.distance,
+            "StrokeId": req.stroke as u8,
+            "CourseId": req.course as u8,
             "StartAge": start_age,
             "EndAge": end_age,
-            "Gender": self.gender.to_string(),
+            "Gender": req.gender.to_string(),
             "Standard": "12",  // corresponds to "slower than B", taken from dropdown menu index (probably unstable)
             "IncludeTimesForUsaSwimmingMembersOnly": members_only,
             "ClubId": "-1",  // TODO
             "ClubName": "",  // TODO
             "Lscs": "All",  // TODO: "All" if lscs is None else "+".join(lscs)
-            "Zone": self.zone as u8,
+            "Zone": req.zone as u8,
             "TimesToInclude": best_only,
             "SortBy1": "EventSortOrder",
             "SortBy2": "",
             "SortBy3": "",
-            "MaxResults": self.max_results,
+            "MaxResults": req.max_results,
         });
         value
     }
@@ -235,7 +235,7 @@ pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, Box<dyn Error
         .send()
         .await?;
 
-    let body_json = req.to_value();
+    let body_json = Value::from(req);
 
     let report_key = client
         .post("https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes")
@@ -259,7 +259,7 @@ pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, Box<dyn Error
         .replace("=\"", "\"");
 
     match csv_raw.contains("Please rerun the report.") {
-        true => Err("Top Times Search failed")?,
+        true => Err("Top Times Search failed".into()),
         false => Ok(csv_raw),
     }
 }

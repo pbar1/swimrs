@@ -3,7 +3,7 @@ use std::{error::Error, str::FromStr};
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display)]
+#[derive(Debug, Serialize, Deserialize, Display)]
 #[serde(rename_all = "PascalCase")]
 pub enum Gender {
     Male,
@@ -11,7 +11,7 @@ pub enum Gender {
     Mixed,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Stroke {
     /// All strokes
     All = 0,
@@ -52,7 +52,7 @@ pub enum Stroke {
     MedleyRelay = 7,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
 pub enum Course {
     /// All courses
     All = 0,
@@ -70,7 +70,7 @@ pub enum Course {
     LCM = 3,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display)]
+#[derive(Debug, Serialize, Deserialize, Display)]
 pub enum Zone {
     All = 0,
     Central = 1,
@@ -80,12 +80,12 @@ pub enum Zone {
 }
 
 // TODO: implement rest of the LSCs
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display)]
+#[derive(Debug, Serialize, Deserialize, Display)]
 pub enum LSC {
     All,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display)]
+#[derive(Debug, Serialize, Deserialize, Display)]
 pub enum TimeType {
     Individual,
     Relay,

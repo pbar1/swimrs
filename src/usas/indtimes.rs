@@ -109,14 +109,15 @@ impl Default for IndTimesRequest {
     }
 }
 
-impl TryFrom<&IndTimeRaw> for IndTime {
+impl TryFrom<IndTimeRaw> for IndTime {
     type Error = Box<dyn Error>;
 
-    fn try_from(raw: &IndTimeRaw) -> Result<Self, Self::Error> {
+    fn try_from(raw: IndTimeRaw) -> Result<Self, Self::Error> {
         let swim_event = SwimEvent::from_str(raw.stroke.as_str())?;
         let swim_time = SwimTime::from_str(raw.swim_time.as_str())?;
         let alt_adj_swim_time = SwimTime::from_str(raw.alt_adj_time.as_str())?;
         let sanctioned = raw.sanction_status == "Yes";
+        let swim_date = parse_date(raw.swim_date.as_str())?;
 
         Ok(IndTime {
             stroke: swim_event.stroke,
@@ -125,12 +126,12 @@ impl TryFrom<&IndTimeRaw> for IndTime {
             swim_time: swim_time.seconds,
             alt_adj_time: alt_adj_swim_time.seconds,
             power_points: raw.power_points,
-            standard: raw.standard.clone(),
-            meet_name: raw.meet_name.clone(),
-            lsc: raw.lsc.clone(),
-            club: raw.club.clone(),
-            swim_date: parse_date(raw.swim_date.as_str()).unwrap(),
-            person_clustered_id: raw.person_clustered_id.clone(),
+            standard: raw.standard,
+            meet_name: raw.meet_name,
+            lsc: raw.lsc,
+            club: raw.club,
+            swim_date,
+            person_clustered_id: raw.person_clustered_id,
             meet_id: raw.meet_id,
             time_id: raw.time_id,
             distance: raw.distance,
@@ -209,7 +210,7 @@ fn parse(resp_html: String) -> Result<Vec<IndTime>, Box<dyn Error>> {
     let output = caps.get(1).map_or("", |m| m.as_str());
     let raw_data: Vec<IndTimeRaw> = serde_json::from_str(output)?;
     let data: Result<Vec<IndTime>, Box<dyn Error>> =
-        raw_data.iter().map(IndTime::try_from).collect();
+        raw_data.into_iter().map(IndTime::try_from).collect();
     data
 }
 
