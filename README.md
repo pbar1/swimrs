@@ -1,3 +1,3 @@
-# `swimrs`
+# swimrs
 
-More to come!
+Swimming times utility written in Rust.

@@ -123,11 +123,11 @@ impl Default for TopTimesRequest {
     }
 }
 
-impl TryFrom<&TopTimeRaw> for TopTime {
+impl TryFrom<TopTimeRaw> for TopTime {
     type Error = Box<dyn Error>;
 
-    fn try_from(value: &TopTimeRaw) -> Result<Self, Self::Error> {
-        debug!("try_from TopTimeRaw: {:?}", value);
+    fn try_from(value: TopTimeRaw) -> Result<Self, Self::Error> {
+        debug!("attempting to convert to TopTime: {:?}", value);
 
         let swim_event = SwimEvent::from_str(value.event_desc.as_str())?;
         let swim_time = SwimTime::from_str(value.swim_time_formatted.as_str())?;
@@ -136,22 +136,21 @@ impl TryFrom<&TopTimeRaw> for TopTime {
         let sanctioned = value.sanction_status == "Yes";
         let foreign = value.foreign_yesno == "Yes";
 
-        // TODO: what is the best practice on using .clone() here?
         Ok(TopTime {
             rank: value.result_rank,
-            full_name: value.full_name.clone(),
-            time_id: value.time_id.clone(),
+            full_name: value.full_name,
+            time_id: value.time_id,
             distance: swim_event.distance,
             stroke: swim_event.stroke,
             course: swim_event.course,
             age: value.swimmer_age,
             swim_time_seconds: swim_time.seconds,
             alt_adj_swim_time_seconds: alt_adj_swim_time.seconds,
-            standard_name: value.standard_name.clone(),
-            meet_name: value.meet_name.clone(),
+            standard_name: value.standard_name,
+            meet_name: value.meet_name,
             swim_date,
-            club_name: value.club_name.clone(),
-            lsc_id: value.lsc_id.clone(),
+            club_name: value.club_name,
+            lsc_id: value.lsc_id,
             foreign,
             hytek_power_points: value.hytek_power_points,
             sanctioned,
@@ -221,7 +220,7 @@ pub async fn search(req: TopTimesRequest) -> Result<Vec<TopTime>, Box<dyn Error>
     // TODO: exonerated up to this point, as it seems CSVs can be deserialized into TopTimeRaw
 
     let data: Result<Vec<TopTime>, Box<dyn Error>> =
-        data_raw.iter().map(TopTime::try_from).collect();
+        data_raw.into_iter().map(TopTime::try_from).collect();
     data
 }
 
