@@ -23,6 +23,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match matches.subcommand_name() {
         Some("toptimes") => usas::example_top_times().await,
         Some("indtimes") => usas::example_individual_times().await,
+        Some("mirror") => usas::mirror(),
         _ => panic!("impossible!"),
     }
 }

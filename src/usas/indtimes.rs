@@ -1,6 +1,7 @@
 use std::{collections::HashMap, convert::TryFrom, error::Error, str::FromStr};
 
 use chrono::{offset::Local, Duration, NaiveDate, NaiveDateTime};
+use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -113,7 +114,9 @@ impl TryFrom<IndTimeRaw> for IndTime {
     type Error = Box<dyn Error>;
 
     fn try_from(raw: IndTimeRaw) -> Result<Self, Self::Error> {
-        let swim_event = SwimEvent::from_str(raw.stroke.as_str())?;
+        debug!("Converting to IndTime: {:?}", raw);
+
+        let swim_event = SwimEvent::from_str(format!("{} {}", raw.stroke, raw.course).as_str())?;
         let swim_time = SwimTime::from_str(raw.swim_time.as_str())?;
         let alt_adj_swim_time = SwimTime::from_str(raw.alt_adj_time.as_str())?;
         let sanctioned = raw.sanction_status == "Yes";
@@ -141,52 +144,51 @@ impl TryFrom<IndTimeRaw> for IndTime {
     }
 }
 
-pub async fn get_times(req: IndTimesRequest) -> Result<Vec<IndTime>, Box<dyn Error>> {
-    let resp = fetch_html(req).await?;
+impl From<IndTimesRequest> for HashMap<&'static str, String> {
+    fn from(req: IndTimesRequest) -> Self {
+        let start_age = match req.start_age {
+            Some(age) => age.to_string(),
+            None => String::from("All"),
+        };
+        let end_age = match req.end_age {
+            Some(age) => age.to_string(),
+            None => String::from("All"),
+        };
+        let from_date = req.from_date.format("%-m/%-d/%Y").to_string();
+        let to_date = req.to_date.format("%-m/%-d/%Y").to_string();
+        let distance_id = req.distance.to_string();
+        let stroke_id = (req.stroke as u8).to_string();
+        let course_id = (req.course as u8).to_string();
+
+        let mut params = HashMap::new();
+        params.insert("DivId", String::from("Times_TimesSearchDetail_Index_Div-1"));
+        params.insert("FirstName", req.first_name);
+        params.insert("LastName", req.last_name);
+        params.insert("PersonId", String::from(""));
+        params.insert("FromDate", from_date);
+        params.insert("ToDate", to_date);
+        params.insert("DateRangeId", String::from("0"));
+        params.insert("DistanceId", distance_id);
+        params.insert("StrokeId", stroke_id);
+        params.insert("CourseId", course_id);
+        params.insert("StartAge", start_age);
+        params.insert("EndAge", end_age);
+        params.insert("SelectedAgeFilter", String::from("All"));
+        params.insert("SortPeopleBy", String::from("Name"));
+        params.insert("SortTimesBy", String::from("EventSortOrder"));
+
+        params
+    }
+}
+
+pub async fn search(req: IndTimesRequest) -> Result<Vec<IndTime>, Box<dyn Error>> {
+    let resp = fetch_raw(req).await?;
     parse(resp)
 }
 
-fn form_body(req: IndTimesRequest) -> HashMap<String, String> {
-    let start_age = match req.start_age {
-        Some(age) => age.to_string(),
-        None => String::from("All"),
-    };
-    let end_age = match req.end_age {
-        Some(age) => age.to_string(),
-        None => String::from("All"),
-    };
-    let from_date = req.from_date.format("%-m/%-d/%Y").to_string();
-    let to_date = req.to_date.format("%-m/%-d/%Y").to_string();
-    let distance_id = req.distance.to_string();
-    let stroke_id = (req.stroke as u8).to_string();
-    let course_id = (req.course as u8).to_string();
-
-    let mut params = HashMap::new();
-    params.insert(
-        String::from("DivId"),
-        String::from("Times_TimesSearchDetail_Index_Div-1"),
-    );
-    params.insert(String::from("FirstName"), req.first_name);
-    params.insert(String::from("LastName"), req.last_name);
-    params.insert(String::from("PersonId"), String::from(""));
-    params.insert(String::from("FromDate"), from_date);
-    params.insert(String::from("ToDate"), to_date);
-    params.insert(String::from("DateRangeId"), String::from("0"));
-    params.insert(String::from("DistanceId"), distance_id);
-    params.insert(String::from("StrokeId"), stroke_id);
-    params.insert(String::from("CourseId"), course_id);
-    params.insert(String::from("StartAge"), start_age);
-    params.insert(String::from("EndAge"), end_age);
-    params.insert(String::from("SelectedAgeFilter"), String::from("All"));
-    params.insert(String::from("SortPeopleBy"), String::from("Name"));
-    params.insert(String::from("SortTimesBy"), String::from("EventSortOrder"));
-
-    params
-}
-
-async fn fetch_html(req: IndTimesRequest) -> Result<String, Box<dyn Error>> {
+async fn fetch_raw(req: IndTimesRequest) -> Result<String, Box<dyn Error>> {
     let client = reqwest::Client::builder().cookie_store(true).build()?;
-    let params = form_body(req);
+    let request_body = HashMap::from(req);
 
     // Fetch the referring page to populate the cookie jar, which seems to be necessary
     client
@@ -196,7 +198,7 @@ async fn fetch_html(req: IndTimesRequest) -> Result<String, Box<dyn Error>> {
 
     Ok(client
         .post("https://www.usaswimming.org/api/Times_TimesSearchDetail/ListTimes")
-        .form(&params)
+        .form(&request_body)
         .send()
         .await?
         .text()
