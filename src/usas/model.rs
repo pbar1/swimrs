@@ -1,5 +1,6 @@
 use std::{error::Error, str::FromStr};
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
@@ -91,6 +92,7 @@ pub enum TimeType {
     Relay,
 }
 
+#[derive(Debug)]
 pub struct SwimEvent {
     pub distance: u16,
     pub stroke: Stroke,
@@ -102,11 +104,23 @@ pub struct SwimTime {
     pub relay: bool,
 }
 
+impl SwimEvent {
+    fn new(distance: u16, stroke: Stroke, course: Course) -> Self {
+        SwimEvent {
+            distance,
+            stroke,
+            course,
+        }
+    }
+}
+
 impl FromStr for SwimEvent {
     type Err = Box<dyn Error>;
 
     /// Converts a string like "100 FR SCY" to a SwimEvent.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        debug!("Converting to SwimEvent: {}", s);
+
         let split: Vec<&str> = s.split(' ').collect();
         if split.len() != 3 {
             return Err(format!("Unexpected SwimEvent str: {}", s).into());
@@ -129,6 +143,8 @@ impl FromStr for SwimTime {
 
     /// Converts a string like "19.79", "19.79r", "1:04.02", "1:04.02r" to a SwimTime.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        debug!("Converting to SwimTime: {}", s);
+
         let relay = s.contains('r');
         let clean = s.replace('r', "");
         let split: Vec<&str> = clean.split(':').collect();
@@ -146,3 +162,271 @@ impl FromStr for SwimTime {
         Ok(SwimTime { seconds, relay })
     }
 }
+
+pub const VALID_EVENTS: [SwimEvent; 53] = [
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 500,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 1000,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 1650,
+        stroke: Stroke::Freestyle,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Backstroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Backstroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Backstroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Butterfly,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Butterfly,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Butterfly,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 400,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCY,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 400,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 800,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 1500,
+        stroke: Stroke::Freestyle,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Backstroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Backstroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Backstroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Breaststroke,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Butterfly,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Butterfly,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Butterfly,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 400,
+        stroke: Stroke::IndividualMedley,
+        course: Course::SCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 400,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 800,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 1500,
+        stroke: Stroke::Freestyle,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Backstroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Backstroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Backstroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Breaststroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Breaststroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Breaststroke,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 50,
+        stroke: Stroke::Butterfly,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 100,
+        stroke: Stroke::Butterfly,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::Butterfly,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 200,
+        stroke: Stroke::IndividualMedley,
+        course: Course::LCM,
+    },
+    SwimEvent {
+        distance: 400,
+        stroke: Stroke::IndividualMedley,
+        course: Course::LCM,
+    },
+];
