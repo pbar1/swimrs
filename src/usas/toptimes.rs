@@ -2,10 +2,15 @@ use std::{convert::TryFrom, error::Error, str::FromStr};
 
 use chrono::{offset::Local, Duration, NaiveDate};
 use log::debug;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::usas::model::{Course, Gender, Stroke, SwimEvent, SwimTime, TimeType, Zone, LSC};
+
+pub struct TopTimesClient {
+    client: Client,
+}
 
 /// Input for Top Times / Event Rank Search.
 #[derive(Debug)]
@@ -127,7 +132,7 @@ impl TryFrom<TopTimeRaw> for TopTime {
     type Error = Box<dyn Error>;
 
     fn try_from(value: TopTimeRaw) -> Result<Self, Self::Error> {
-        debug!("attempting to convert to TopTime: {:?}", value);
+        debug!("Converting to TopTime: {:?}", value);
 
         let swim_event = SwimEvent::from_str(value.event_desc.as_str())?;
         let swim_time = SwimTime::from_str(value.swim_time_formatted.as_str())?;
@@ -161,6 +166,8 @@ impl TryFrom<TopTimeRaw> for TopTime {
 
 impl From<TopTimesRequest> for Value {
     fn from(req: TopTimesRequest) -> Self {
+        debug!("Converting to Value: {:?}", req);
+
         let start_age = match req.start_age {
             Some(age) => age.to_string(),
             None => String::from("All"),
@@ -207,59 +214,66 @@ impl From<TopTimesRequest> for Value {
     }
 }
 
-pub async fn search(req: TopTimesRequest) -> Result<Vec<TopTime>, Box<dyn Error>> {
-    let data_csv = top_times_raw(req).await?.replace("=\"", "\"");
-    let mut rdr = csv::ReaderBuilder::new().from_reader(data_csv.as_bytes());
-
-    // FIXME: turn this into a chained map
-    let mut data_raw: Vec<TopTimeRaw> = vec![];
-    for r in rdr.deserialize() {
-        let rec: TopTimeRaw = r?;
-        data_raw.push(rec);
+impl TopTimesClient {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        let client = Client::builder().cookie_store(true).build()?;
+        Ok(TopTimesClient { client })
     }
-    // TODO: exonerated up to this point, as it seems CSVs can be deserialized into TopTimeRaw
 
-    let data: Result<Vec<TopTime>, Box<dyn Error>> =
-        data_raw.into_iter().map(TopTime::try_from).collect();
-    data
-}
+    pub async fn populate_cookies(&self) -> Result<(), Box<dyn Error>> {
+        self.client
+            .get("https://www.usaswimming.org/times/popular-resources/event-rank-search")
+            .send()
+            .await?;
+        Ok(())
+    }
 
-pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, Box<dyn Error>> {
-    // FIXME: Make client injectable
-    let client = reqwest::Client::builder().cookie_store(true).build()?;
+    pub async fn search(&self, req: TopTimesRequest) -> Result<Vec<TopTime>, Box<dyn Error>> {
+        let data_csv = self.fetch_raw(req).await?;
+        let mut rdr = csv::ReaderBuilder::new().from_reader(data_csv.as_bytes());
 
-    // FIXME: Extract this so it isn't repeated
-    // Fetch the referring page to populate the cookie jar, which seems to be necessary
-    client
-        .get("https://www.usaswimming.org/times/popular-resources/event-rank-search")
-        .send()
-        .await?;
+        // FIXME: turn this into a chained map
+        let mut data_raw: Vec<TopTimeRaw> = vec![];
+        for r in rdr.deserialize() {
+            let rec: TopTimeRaw = r?;
+            data_raw.push(rec);
+        }
+        // TODO: exonerated up to this point, as it seems CSVs can be deserialized into TopTimeRaw
 
-    let body_json = Value::from(req);
+        let data: Result<Vec<TopTime>, Box<dyn Error>> =
+            data_raw.into_iter().map(TopTime::try_from).collect();
+        data
+    }
 
-    let report_key = client
-        .post("https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes")
-        .json(&body_json)
-        .send()
-        .await?
-        .text()
-        .await?;
+    async fn fetch_raw(&self, req: TopTimesRequest) -> Result<String, Box<dyn Error>> {
+        let body_json = Value::from(req);
 
-    let csv_raw = client
-        .get("https://www.usaswimming.org/api/Reports_ReportViewer/GetReport")
-        .query(&[
-            ("Key", report_key),
-            ("Format", String::from("Csv")),
-            ("IsFileDownload", String::from("false")),
-        ])
-        .send()
-        .await?
-        .text()
-        .await?
-        .replace("=\"", "\"");
+        let report_key = self
+            .client
+            .post("https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes")
+            .json(&body_json)
+            .send()
+            .await?
+            .text()
+            .await?;
 
-    match csv_raw.contains("Please rerun the report.") {
-        true => Err("Top Times Search failed".into()),
-        false => Ok(csv_raw),
+        let csv_raw = self
+            .client
+            .get("https://www.usaswimming.org/api/Reports_ReportViewer/GetReport")
+            .query(&[
+                ("Key", report_key),
+                ("Format", String::from("Csv")),
+                ("IsFileDownload", String::from("false")),
+            ])
+            .send()
+            .await?
+            .text()
+            .await?
+            .replace("=\"", "\"");
+
+        match csv_raw.contains("Please rerun the report.") {
+            true => Err("Top Times Search failed".into()),
+            false => Ok(csv_raw),
+        }
     }
 }

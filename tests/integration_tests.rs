@@ -24,6 +24,9 @@ use swimrs::usas::{
 
 #[tokio::test]
 async fn top_times() {
+    let client = toptimes::TopTimesClient::new().unwrap();
+    client.populate_cookies().await.unwrap();
+
     let req = toptimes::TopTimesRequest {
         gender: Gender::Male,
         distance: 200,
@@ -40,7 +43,8 @@ async fn top_times() {
         best_only: false,
         max_results: 100,
     };
-    let output = toptimes::search(req).await.unwrap();
+
+    let output = client.search(req).await.unwrap();
     let seconds = output[0].swim_time_seconds;
     assert!((seconds - 102.96).abs() < 0.01);
 }

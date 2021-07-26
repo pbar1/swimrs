@@ -2,7 +2,7 @@ use std::error::Error;
 
 use chrono::NaiveDate;
 
-use crate::usas::model::{Course, Gender, Stroke};
+use crate::usas::model::{Course, Gender, Stroke, VALID_EVENTS};
 
 pub mod indtimes;
 pub mod model;
@@ -19,12 +19,15 @@ pub async fn example_individual_times() -> Result<(), Box<dyn Error>> {
         course: Course::LCM,
         ..indtimes::IndTimesRequest::default()
     };
-    let output = indtimes::get_times(req).await?;
+    let output = indtimes::search(req).await?;
     println!("{:#?}", output);
     Ok(())
 }
 
 pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
+    let client = toptimes::TopTimesClient::new()?;
+    client.populate_cookies().await?;
+
     let req = toptimes::TopTimesRequest {
         gender: Gender::Male,
         distance: 200,
@@ -35,7 +38,7 @@ pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
         max_results: 10,
         ..toptimes::TopTimesRequest::default()
     };
-    let output = toptimes::search(req).await?;
+    let output = client.search(req).await?;
 
     let mut wtr = csv::Writer::from_writer(std::io::stdout());
     for rec in output {
@@ -45,5 +48,12 @@ pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
     wtr.flush();
 
     // println!("{:#?}", output);
+    Ok(())
+}
+
+pub fn mirror() -> Result<(), Box<dyn Error>> {
+    VALID_EVENTS
+        .iter()
+        .for_each(|event| println!("{:?}", event));
     Ok(())
 }
