@@ -1,46 +1,39 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::TryFrom};
 
 use chrono::{offset::Local, Duration, NaiveDate, NaiveDateTime};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
-use crate::usas::model::*;
-
-/// Errors that can be encountered during an Individual Times Search.
-#[derive(Debug, Error)]
-pub enum IndTimesError {
-    #[error("unknown sanction status: {0}")]
-    UnknownSanctionStatus(String),
-    #[error("unknown stroke: {0}")]
-    UnknownStroke(String),
-    #[error("unknown course: {0}")]
-    UnknownCourse(String),
-    #[error("unable to build http client")]
-    ClientBuild,
-    #[error("unable to build regex")]
-    RegexBuild,
-    #[error("no times found")]
-    NoTimes,
-    #[error("unable to deserialize raw input")]
-    DeserializeRaw,
-    #[error("placeholder")]
-    ParseDate,
-    #[error("todo: implement error")]
-    Todo,
-}
+use crate::usas::model::{Course, Gender, Stroke, SwimError, TimeType, Zone, LSC};
 
 /// Input for Individual Times Search.
 #[derive(Debug)]
 pub struct IndTimesRequest {
+    /// First name of the swimmer to search for
     pub first_name: String,
+
+    /// Last name of the swimmer to search for
     pub last_name: String,
+
+    /// Starting date in the search range
     pub from_date: NaiveDate,
+
+    /// Ending date in the search range
     pub to_date: NaiveDate,
+
+    /// Swimming event distance to limit results to
     pub distance: u16,
+
+    /// Swimming stroke to limit results to
     pub stroke: Stroke,
+
+    /// Swimming course to limit results to
     pub course: Course,
+
+    /// Starting age in the search range
     pub start_age: Option<u8>,
+
+    /// Ending age in the search range
     pub end_age: Option<u8>,
 }
 
@@ -116,57 +109,61 @@ impl Default for IndTimesRequest {
     }
 }
 
-impl IndTimeRaw {
-    fn to_individual_time(&self) -> Result<IndTime, IndTimesError> {
-        let sanc = self.sanction_status.as_str();
-        let sanctioned = match sanc {
-            "Yes" => true,
-            "No" => false,
-            _ => return Err(IndTimesError::UnknownSanctionStatus(sanc.to_string())),
-        };
-        let relay = self.swim_time.contains('r');
-        let event_split: Vec<&str> = self.stroke.split(' ').collect();
+impl TryFrom<&IndTimeRaw> for IndTime {
+    type Error = SwimError;
+
+    fn try_from(raw: &IndTimeRaw) -> Result<Self, Self::Error> {
+        let event_split: Vec<&str> = raw.stroke.split(' ').collect();
         let stroke = match event_split[1] {
-            "FR" => Stroke::FR,
-            "BK" => Stroke::BK,
-            "BR" => Stroke::BR,
-            "FL" => Stroke::FL,
-            "IM" => Stroke::IM,
-            "FR-R" => Stroke::FR_R,
-            "MED-R" => Stroke::MED_R,
-            _ => return Err(IndTimesError::UnknownStroke(event_split[1].to_string())),
+            "FR" => Stroke::Freestyle,
+            "BK" => Stroke::Backstroke,
+            "BR" => Stroke::Breaststroke,
+            "FL" => Stroke::Butterfly,
+            "IM" => Stroke::IndividualMedley,
+            "FR-R" => Stroke::FreestyleRelay,
+            "MED-R" => Stroke::MedleyRelay,
+            _ => return Err(SwimError::UnknownStroke(event_split[1].to_string())),
         };
-        let crs = self.course.as_str();
-        let course = match crs {
+        let course = match raw.course.as_str() {
             "LCM" => Course::LCM,
             "SCM" => Course::SCM,
             "SCY" => Course::SCY,
-            _ => return Err(IndTimesError::UnknownCourse(crs.to_string())),
+            _ => return Err(SwimError::UnknownCourse(raw.course.clone())),
         };
+        let sanctioned = match raw.sanction_status.as_str() {
+            "Yes" => true,
+            "No" => false,
+            _ => {
+                return Err(SwimError::UnknownSanctionStatus(
+                    raw.sanction_status.clone(),
+                ))
+            }
+        };
+        let relay = raw.swim_time.contains('r');
 
         Ok(IndTime {
             stroke,
             course,
-            age: self.age,
-            swim_time: parse_seconds(self.swim_time_for_sort.as_str()),
-            alt_adj_time: parse_seconds(self.alt_adj_time_for_sort.as_str()),
-            power_points: self.power_points,
-            standard: self.standard.clone(),
-            meet_name: self.meet_name.clone(),
-            lsc: self.lsc.clone(),
-            club: self.club.clone(),
-            swim_date: parse_date(self.swim_date.as_str()).unwrap(),
-            person_clustered_id: self.person_clustered_id.clone(),
-            meet_id: self.meet_id,
-            time_id: self.time_id,
-            distance: self.distance,
+            age: raw.age,
+            swim_time: parse_seconds(raw.swim_time_for_sort.as_str()),
+            alt_adj_time: parse_seconds(raw.alt_adj_time_for_sort.as_str()),
+            power_points: raw.power_points,
+            standard: raw.standard.clone(),
+            meet_name: raw.meet_name.clone(),
+            lsc: raw.lsc.clone(),
+            club: raw.club.clone(),
+            swim_date: parse_date(raw.swim_date.as_str()).unwrap(),
+            person_clustered_id: raw.person_clustered_id.clone(),
+            meet_id: raw.meet_id,
+            time_id: raw.time_id,
+            distance: raw.distance,
             sanctioned,
             relay,
         })
     }
 }
 
-pub async fn get_times(req: IndTimesRequest) -> Result<Vec<IndTime>, IndTimesError> {
+pub async fn get_times(req: IndTimesRequest) -> Result<Vec<IndTime>, SwimError> {
     let resp = fetch_html(req).await?;
     parse(resp)
 }
@@ -209,11 +206,11 @@ fn form_body(req: IndTimesRequest) -> HashMap<String, String> {
     params
 }
 
-async fn fetch_html(req: IndTimesRequest) -> Result<String, IndTimesError> {
+async fn fetch_html(req: IndTimesRequest) -> Result<String, SwimError> {
     let client = reqwest::Client::builder()
         .cookie_store(true)
         .build()
-        .map_err(|e| IndTimesError::ClientBuild)?;
+        .map_err(|_e| SwimError::ClientBuild)?;
     let params = form_body(req);
 
     // Fetch the referring page to populate the cookie jar, which seems to be necessary
@@ -221,28 +218,27 @@ async fn fetch_html(req: IndTimesRequest) -> Result<String, IndTimesError> {
         .get("https://www.usaswimming.org/times/individual-times-search")
         .send()
         .await
-        .map_err(|e| IndTimesError::Todo)?;
+        .map_err(|_e| SwimError::Todo)?;
 
     Ok(client
         .post("https://www.usaswimming.org/api/Times_TimesSearchDetail/ListTimes")
         .form(&params)
         .send()
         .await
-        .map_err(|e| IndTimesError::Todo)?
+        .map_err(|_e| SwimError::Todo)?
         .text()
         .await
-        .map_err(|e| IndTimesError::Todo)?)
+        .map_err(|_e| SwimError::Todo)?)
 }
 
-fn parse(resp_html: String) -> Result<Vec<IndTime>, IndTimesError> {
-    // TODO: check for errors in response
-    let re = Regex::new(r"data: (\[.*])").map_err(|e| IndTimesError::RegexBuild)?;
+fn parse(resp_html: String) -> Result<Vec<IndTime>, SwimError> {
+    // FIXME: check for errors in response
+    let re = Regex::new(r"data: (\[.*])").map_err(|_e| SwimError::RegexBuild)?;
     let caps = re.captures(resp_html.as_str()).unwrap();
     let output = caps.get(1).map_or("", |m| m.as_str());
     let raw_data: Vec<IndTimeRaw> =
-        serde_json::from_str(output).map_err(|e| IndTimesError::DeserializeRaw)?;
-    let data: Result<Vec<IndTime>, IndTimesError> =
-        raw_data.iter().map(|x| x.to_individual_time()).collect();
+        serde_json::from_str(output).map_err(|_e| SwimError::DeserializeRaw)?;
+    let data: Result<Vec<IndTime>, SwimError> = raw_data.iter().map(IndTime::try_from).collect();
     data
 }
 
@@ -253,19 +249,13 @@ fn parse_seconds(swim_time: &str) -> f64 {
     60f64 * minutes + seconds
 }
 
-fn parse_date(swim_date: &str) -> Result<NaiveDate, IndTimesError> {
+fn parse_date(swim_date: &str) -> Result<NaiveDate, SwimError> {
     let seconds = swim_date
         .replace("/Date(", "")
         .replace(")/", "")
         .parse::<i64>()
-        .map_err(|e| IndTimesError::ParseDate)?
+        .map_err(|_e| SwimError::ParseDate)?
         / 1000;
     let dt = NaiveDateTime::from_timestamp(seconds, 0).date();
     Ok(dt)
 }
-
-// mod tests {
-//     use super::*
-//
-//
-// }

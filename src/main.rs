@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error};
+use std::error::Error;
 
 use clap::{App, AppSettings};
 
@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .get_matches();
 
     match matches.subcommand_name() {
-        // Some("toptimes") => usas::example_top_times().await,
+        Some("toptimes") => usas::example_top_times().await,
         Some("indtimes") => usas::example_individual_times().await,
         _ => panic!("impossible!"),
     }
