@@ -3,9 +3,14 @@ use std::{collections::HashMap, convert::TryFrom, error::Error, str::FromStr};
 use chrono::{offset::Local, Duration, NaiveDate, NaiveDateTime};
 use log::debug;
 use regex::Regex;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::usas::model::{Course, Stroke, SwimEvent, SwimTime};
+
+pub struct IndTimesClient {
+    client: Client,
+}
 
 /// Input for Individual Times Search.
 #[derive(Debug)]
@@ -181,32 +186,41 @@ impl From<IndTimesRequest> for HashMap<&'static str, String> {
     }
 }
 
-pub async fn search(req: IndTimesRequest) -> Result<Vec<IndTime>, Box<dyn Error>> {
-    let resp = fetch_raw(req).await?;
-    parse(resp)
+impl IndTimesClient {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        let client = Client::builder().cookie_store(true).build()?;
+        Ok(IndTimesClient { client })
+    }
+
+    pub async fn populate_cookies(&self) -> Result<(), Box<dyn Error>> {
+        self.client
+            .get("https://www.usaswimming.org/times/individual-times-search")
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    pub async fn search(&self, req: IndTimesRequest) -> Result<Vec<IndTime>, Box<dyn Error>> {
+        let resp = self.fetch_raw(req).await?;
+        parse(resp)
+    }
+
+    async fn fetch_raw(&self, req: IndTimesRequest) -> Result<String, Box<dyn Error>> {
+        let request_body = HashMap::from(req);
+        Ok(self
+            .client
+            .post("https://www.usaswimming.org/api/Times_TimesSearchDetail/ListTimes")
+            .form(&request_body)
+            .send()
+            .await?
+            .text()
+            .await?)
+    }
 }
 
-async fn fetch_raw(req: IndTimesRequest) -> Result<String, Box<dyn Error>> {
-    let client = reqwest::Client::builder().cookie_store(true).build()?;
-    let request_body = HashMap::from(req);
-
-    // Fetch the referring page to populate the cookie jar, which seems to be necessary
-    client
-        .get("https://www.usaswimming.org/times/individual-times-search")
-        .send()
-        .await?;
-
-    Ok(client
-        .post("https://www.usaswimming.org/api/Times_TimesSearchDetail/ListTimes")
-        .form(&request_body)
-        .send()
-        .await?
-        .text()
-        .await?)
-}
-
+// FIXME implement from trait
+// FIXME: check for errors in response
 fn parse(resp_html: String) -> Result<Vec<IndTime>, Box<dyn Error>> {
-    // FIXME: check for errors in response
     let re = Regex::new(r"data: (\[.*])")?;
     let caps = re.captures(resp_html.as_str()).unwrap();
     let output = caps.get(1).map_or("", |m| m.as_str());

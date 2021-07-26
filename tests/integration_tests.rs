@@ -5,22 +5,25 @@ use swimrs::usas::{
     toptimes,
 };
 
-// #[tokio::test]
-// async fn individual_times() {
-//     let req = indtimes::IndTimesRequest {
-//         first_name: String::from("Caeleb"),
-//         last_name: String::from("Dressel"),
-//         from_date: NaiveDate::from_ymd(2019, 7, 26),
-//         to_date: NaiveDate::from_ymd(2019, 7, 26),
-//         distance: 100,
-//         stroke: Stroke::Butterfly,
-//         course: Course::LCM,
-//         ..indtimes::IndTimesRequest::default()
-//     };
-//     let output = indtimes::get_times(req).await.unwrap();
-//     let seconds = output[0].swim_time;
-//     assert!((seconds - 49.50).abs() < 0.01);
-// }
+#[tokio::test]
+async fn individual_times() {
+    let client = indtimes::IndTimesClient::new().unwrap();
+    client.populate_cookies().await.unwrap();
+
+    let req = indtimes::IndTimesRequest {
+        first_name: String::from("Caeleb"),
+        last_name: String::from("Dressel"),
+        from_date: NaiveDate::from_ymd(2019, 7, 26),
+        to_date: NaiveDate::from_ymd(2019, 7, 26),
+        distance: 100,
+        stroke: Stroke::Butterfly,
+        course: Course::LCM,
+        ..indtimes::IndTimesRequest::default()
+    };
+    let output = client.search(req).await.unwrap();
+    let seconds = output[0].swim_time;
+    assert!((seconds - 49.50).abs() < 0.01);
+}
 
 #[tokio::test]
 async fn top_times() {

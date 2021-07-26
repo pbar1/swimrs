@@ -9,6 +9,9 @@ pub mod model;
 pub mod toptimes;
 
 pub async fn example_individual_times() -> Result<(), Box<dyn Error>> {
+    let client = indtimes::IndTimesClient::new()?;
+    client.populate_cookies().await?;
+
     let req = indtimes::IndTimesRequest {
         first_name: String::from("Caeleb"),
         last_name: String::from("Dressel"),
@@ -19,7 +22,7 @@ pub async fn example_individual_times() -> Result<(), Box<dyn Error>> {
         course: Course::LCM,
         ..indtimes::IndTimesRequest::default()
     };
-    let output = indtimes::search(req).await?;
+    let output = client.search(req).await?;
     println!("{:#?}", output);
     Ok(())
 }

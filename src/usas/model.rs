@@ -104,16 +104,6 @@ pub struct SwimTime {
     pub relay: bool,
 }
 
-impl SwimEvent {
-    fn new(distance: u16, stroke: Stroke, course: Course) -> Self {
-        SwimEvent {
-            distance,
-            stroke,
-            course,
-        }
-    }
-}
-
 impl FromStr for SwimEvent {
     type Err = Box<dyn Error>;
 
