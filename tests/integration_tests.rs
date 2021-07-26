@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use swimrs::usas::{
     indtimes,
-    model::{Course, Gender, Stroke, SwimError, TimeType, Zone, LSC},
+    model::{Course, Gender, Stroke, TimeType, Zone, LSC},
     toptimes,
 };
 

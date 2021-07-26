@@ -1,10 +1,11 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, error::Error, str::FromStr};
 
 use chrono::{offset::Local, Duration, NaiveDate};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::usas::model::{Course, Gender, Stroke, SwimError, TimeType, Zone, LSC};
+use crate::usas::model::{Course, Gender, Stroke, SwimEvent, SwimTime, TimeType, Zone, LSC};
 
 /// Input for Top Times / Event Rank Search.
 #[derive(Debug)]
@@ -123,44 +124,16 @@ impl Default for TopTimesRequest {
 }
 
 impl TryFrom<&TopTimeRaw> for TopTime {
-    type Error = SwimError;
+    type Error = Box<dyn Error>;
 
     fn try_from(value: &TopTimeRaw) -> Result<Self, Self::Error> {
-        let event_split: Vec<&str> = value.event_desc.split(' ').collect();
-        if event_split.len() != 3 {
-            return Err(SwimError::Todo);
-        }
+        debug!("try_from TopTimeRaw: {:?}", value);
 
-        // FIXME: extract into Stroke::from_str
-        let stroke = match event_split[1] {
-            "FR" => Stroke::Freestyle,
-            "BK" => Stroke::Backstroke,
-            "BR" => Stroke::Breaststroke,
-            "FL" => Stroke::Butterfly,
-            "IM" => Stroke::IndividualMedley,
-            "FR-R" => Stroke::FreestyleRelay,
-            "MED-R" => Stroke::MedleyRelay,
-            _ => return Err(SwimError::UnknownStroke(String::from(event_split[1]))),
-        };
-
-        // FIXME: extract into Course::from_str
-        let course = match event_split[2] {
-            "LCM" => Course::LCM,
-            "SCM" => Course::SCM,
-            "SCY" => Course::SCY,
-            _ => return Err(SwimError::UnknownCourse(String::from(event_split[2]))),
-        };
-        let swim_date = NaiveDate::parse_from_str(value.swim_date.as_str(), "%-m/%-d/%Y")
-            .map_err(|_e| SwimError::ParseDate)?;
-        let sanctioned = match value.sanction_status.as_str() {
-            "Yes" => true,
-            "No" => false,
-            _ => {
-                return Err(SwimError::UnknownSanctionStatus(
-                    value.sanction_status.clone(),
-                ))
-            }
-        };
+        let swim_event = SwimEvent::from_str(value.event_desc.as_str())?;
+        let swim_time = SwimTime::from_str(value.swim_time_formatted.as_str())?;
+        let alt_adj_swim_time = SwimTime::from_str(value.alt_adj_swim_time_formatted.as_str())?;
+        let swim_date = NaiveDate::parse_from_str(value.swim_date.as_str(), "%-m/%-d/%Y")?;
+        let sanctioned = value.sanction_status == "Yes";
         let foreign = value.foreign_yesno == "Yes";
 
         // TODO: what is the best practice on using .clone() here?
@@ -168,12 +141,12 @@ impl TryFrom<&TopTimeRaw> for TopTime {
             rank: value.result_rank,
             full_name: value.full_name.clone(),
             time_id: value.time_id.clone(),
-            distance: value.distance,
-            stroke,
-            course,
+            distance: swim_event.distance,
+            stroke: swim_event.stroke,
+            course: swim_event.course,
             age: value.swimmer_age,
-            swim_time_seconds: parse_seconds(value.swim_time_formatted.as_str()),
-            alt_adj_swim_time_seconds: parse_seconds(value.alt_adj_swim_time_formatted.as_str()),
+            swim_time_seconds: swim_time.seconds,
+            alt_adj_swim_time_seconds: alt_adj_swim_time.seconds,
             standard_name: value.standard_name.clone(),
             meet_name: value.meet_name.clone(),
             swim_date,
@@ -182,7 +155,7 @@ impl TryFrom<&TopTimeRaw> for TopTime {
             foreign,
             hytek_power_points: value.hytek_power_points,
             sanctioned,
-            relay: value.swim_time_formatted.contains('r'),
+            relay: swim_time.relay,
         })
     }
 }
@@ -235,39 +208,33 @@ impl TopTimesRequest {
     }
 }
 
-pub async fn search(req: TopTimesRequest) -> Result<Vec<TopTime>, SwimError> {
-    let data_csv = top_times_raw(req)
-        .await
-        .map_err(|_e| SwimError::Todo)?
-        .replace("=\"", "\"");
+pub async fn search(req: TopTimesRequest) -> Result<Vec<TopTime>, Box<dyn Error>> {
+    let data_csv = top_times_raw(req).await?.replace("=\"", "\"");
     let mut rdr = csv::ReaderBuilder::new().from_reader(data_csv.as_bytes());
 
     // FIXME: turn this into a chained map
     let mut data_raw: Vec<TopTimeRaw> = vec![];
     for r in rdr.deserialize() {
-        let rec: TopTimeRaw = r.map_err(|_e| SwimError::Todo)?;
+        let rec: TopTimeRaw = r?;
         data_raw.push(rec);
     }
     // TODO: exonerated up to this point, as it seems CSVs can be deserialized into TopTimeRaw
 
-    let data: Result<Vec<TopTime>, SwimError> = data_raw.iter().map(TopTime::try_from).collect();
+    let data: Result<Vec<TopTime>, Box<dyn Error>> =
+        data_raw.iter().map(TopTime::try_from).collect();
     data
 }
 
-pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, SwimError> {
+pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, Box<dyn Error>> {
     // FIXME: Make client injectable
-    let client = reqwest::Client::builder()
-        .cookie_store(true)
-        .build()
-        .map_err(|_e| SwimError::ClientBuild)?;
+    let client = reqwest::Client::builder().cookie_store(true).build()?;
 
     // FIXME: Extract this so it isn't repeated
     // Fetch the referring page to populate the cookie jar, which seems to be necessary
     client
         .get("https://www.usaswimming.org/times/popular-resources/event-rank-search")
         .send()
-        .await
-        .map_err(|_e| SwimError::Todo)?;
+        .await?;
 
     let body_json = req.to_value();
 
@@ -275,11 +242,9 @@ pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, SwimError> {
         .post("https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes")
         .json(&body_json)
         .send()
-        .await
-        .map_err(|_e| SwimError::Todo)?
+        .await?
         .text()
-        .await
-        .map_err(|_e| SwimError::Todo)?;
+        .await?;
 
     let csv_raw = client
         .get("https://www.usaswimming.org/api/Reports_ReportViewer/GetReport")
@@ -289,28 +254,13 @@ pub async fn top_times_raw(req: TopTimesRequest) -> Result<String, SwimError> {
             ("IsFileDownload", String::from("false")),
         ])
         .send()
-        .await
-        .map_err(|_e| SwimError::Todo)?
+        .await?
         .text()
-        .await
-        .map_err(|_e| SwimError::Todo)?
+        .await?
         .replace("=\"", "\"");
 
     match csv_raw.contains("Please rerun the report.") {
-        true => Err(SwimError::Todo),
+        true => Err("Top Times Search failed")?,
         false => Ok(csv_raw),
-    }
-}
-
-// FIXME: extract this into a shared times library, or maybe into Model with a FromStr
-fn parse_seconds(swim_time: &str) -> f32 {
-    let cleaned = swim_time.replace('r', "");
-    let split: Vec<&str> = cleaned.split(':').collect();
-    if split.len() == 2 {
-        let minutes = split[0].parse::<f32>().unwrap();
-        let seconds = split[1].parse::<f32>().unwrap();
-        60.0 * minutes + seconds
-    } else {
-        split[0].parse::<f32>().unwrap()
     }
 }

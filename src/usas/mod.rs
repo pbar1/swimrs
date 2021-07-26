@@ -2,7 +2,7 @@ use std::error::Error;
 
 use chrono::NaiveDate;
 
-use self::model::{Course, Gender, Stroke, Zone, LSC};
+use crate::usas::model::{Course, Gender, Stroke};
 
 pub mod indtimes;
 pub mod model;
