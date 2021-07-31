@@ -1,12 +1,11 @@
-use std::{error::Error, fs};
+use std::error::Error;
 
 use chrono::NaiveDate;
-use futures::{stream, StreamExt};
-use log::{error, info};
 
-use crate::usas::model::{Course, Gender, Stroke, VALID_EVENTS};
+use crate::usas::model::{Course, Gender, Stroke};
 
 pub mod indtimes;
+pub mod mirror;
 pub mod model;
 pub mod toptimes;
 
@@ -53,40 +52,5 @@ pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
     wtr.flush()?;
 
     // println!("{:#?}", output);
-    Ok(())
-}
-
-// https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest
-pub async fn mirror(concurrency: usize) -> Result<(), Box<dyn Error>> {
-    let client = toptimes::TopTimesClient::new()?;
-    client.populate_cookies().await?;
-
-    // TODO make sure to handle Gender in the model
-    let buffered = stream::iter(VALID_EVENTS)
-        .map(|event| {
-            info!("event: {:?}", event);
-            let client = &client;
-            let req = toptimes::TopTimesRequest {
-                gender: Gender::Male,
-                distance: event.distance,
-                stroke: event.stroke,
-                course: event.course,
-                from_date: NaiveDate::from_ymd(2008, 4, 5),
-                to_date: NaiveDate::from_ymd(2008, 4, 12),
-                ..toptimes::TopTimesRequest::default()
-            };
-            async move { client.search(req).await }
-        })
-        .buffer_unordered(concurrency);
-
-    buffered
-        .for_each(|b| async {
-            match b {
-                Ok(b) => println!("Found {} results", b.len()),
-                Err(e) => error!("Error searching for times: {:?}", e),
-            }
-        })
-        .await;
-
     Ok(())
 }

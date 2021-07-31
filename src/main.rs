@@ -37,6 +37,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match opts.subcmd {
         SubCommand::IndTimes => usas::example_individual_times().await,
         SubCommand::TopTimes => usas::example_top_times().await,
-        SubCommand::Mirror(m) => usas::mirror(m.concurrency).await,
+        SubCommand::Mirror(m) => usas::mirror::mirror(m.concurrency).await,
     }
 }

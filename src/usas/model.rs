@@ -4,7 +4,7 @@ use log::debug;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
 
-#[derive(Debug, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display)]
 #[serde(rename_all = "PascalCase")]
 pub enum Gender {
     Male,
@@ -12,7 +12,7 @@ pub enum Gender {
     Mixed,
 }
 
-#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString)]
 pub enum Stroke {
     /// All strokes
     All = 0,
@@ -53,7 +53,7 @@ pub enum Stroke {
     MedleyRelay = 7,
 }
 
-#[derive(Debug, Serialize, Deserialize, Display, EnumString)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, EnumString)]
 pub enum Course {
     /// All courses
     All = 0,
@@ -71,7 +71,7 @@ pub enum Course {
     LCM = 3,
 }
 
-#[derive(Debug, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display)]
 pub enum Zone {
     All = 0,
     Central = 1,
@@ -81,24 +81,25 @@ pub enum Zone {
 }
 
 // TODO: implement rest of the LSCs
-#[derive(Debug, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display)]
 pub enum LSC {
     All,
 }
 
-#[derive(Debug, Serialize, Deserialize, Display)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display)]
 pub enum TimeType {
     Individual,
     Relay,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SwimEvent {
     pub distance: u16,
     pub stroke: Stroke,
     pub course: Course,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct SwimTime {
     pub seconds: f32,
     pub relay: bool,
@@ -152,6 +153,18 @@ impl FromStr for SwimTime {
         Ok(SwimTime { seconds, relay })
     }
 }
+
+pub const DISTANCES: [u16; 9] = [50, 100, 200, 400, 500, 800, 1000, 1500, 1650];
+
+pub const IND_STROKES: [Stroke; 5] = [
+    Stroke::Freestyle,
+    Stroke::Backstroke,
+    Stroke::Breaststroke,
+    Stroke::Butterfly,
+    Stroke::IndividualMedley,
+];
+
+pub const COURSES: [Course; 3] = [Course::SCY, Course::SCM, Course::LCM];
 
 pub const VALID_EVENTS: [SwimEvent; 53] = [
     SwimEvent {

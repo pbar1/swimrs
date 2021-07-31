@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, error::Error, str::FromStr};
+use std::{convert::TryFrom, error::Error, str::FromStr, time::Duration as StdDuration};
 
 use chrono::{offset::Local, Duration, NaiveDate};
 use log::debug;
@@ -8,17 +8,18 @@ use serde_json::{json, Value};
 
 use crate::usas::model::{Course, Gender, Stroke, SwimEvent, SwimTime, TimeType, Zone, LSC};
 
+#[derive(Debug, Clone)]
 pub struct TopTimesClient {
     client: Client,
 }
 
 /// Input for Top Times / Event Rank Search.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TopTimesRequest {
     /// Gender to search for.
     pub gender: Gender,
 
-    /// Swimming event distance to limit results to.
+    /// Swimming event distance to limit results to. A value of `0` signifies "all distances".
     pub distance: u16,
 
     /// Swimming stroke to limit results to.
@@ -224,7 +225,8 @@ impl TopTimesClient {
         self.client
             .get("https://www.usaswimming.org/times/popular-resources/event-rank-search")
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         Ok(())
     }
 
@@ -254,8 +256,14 @@ impl TopTimesClient {
             .json(&body_json)
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?;
+
+        // key should be an 89-character base64 string ending in "=="
+        if report_key.len() != 89 && !report_key.ends_with("==") {
+            return Err("Failed to fetch Top Times report CSV key".into());
+        }
 
         let csv_raw = self
             .client
@@ -267,12 +275,13 @@ impl TopTimesClient {
             ])
             .send()
             .await?
+            .error_for_status()?
             .text()
             .await?
             .replace("=\"", "\"");
 
-        match csv_raw.contains("Please rerun the report.") {
-            true => Err("Top Times Search failed".into()),
+        match csv_raw.contains("Please rerun the report") {
+            true => Err("Failed to fetch Top Times report".into()),
             false => Ok(csv_raw),
         }
     }
