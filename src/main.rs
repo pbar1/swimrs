@@ -28,6 +28,9 @@ struct Mirror {
     #[clap(short, long, default_value = "1")]
     #[clap(about = "Number of concurrent requests")]
     concurrency: usize,
+    #[clap(short, long)]
+    #[clap(about = "Whether to execute the search requests")]
+    dry_run: bool,
 }
 
 #[tokio::main]
@@ -37,6 +40,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match opts.subcmd {
         SubCommand::IndTimes => usas::example_individual_times().await,
         SubCommand::TopTimes => usas::example_top_times().await,
-        SubCommand::Mirror(m) => usas::mirror::mirror(m.concurrency).await,
+        SubCommand::Mirror(m) => usas::mirror::mirror(m.concurrency, m.dry_run).await,
     }
 }

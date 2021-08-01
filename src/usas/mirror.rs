@@ -13,7 +13,7 @@ use crate::usas::{
 
 // // TODO make sure to handle Gender in the model
 // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest
-pub async fn mirror(concurrency: usize) -> Result<(), Box<dyn Error>> {
+pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Error>> {
     let client = toptimes::TopTimesClient::new()?;
     client.populate_cookies().await?;
 
@@ -168,12 +168,39 @@ fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
         return requests;
     }
 
-    // TODO: divide ages
-    // if req.start_age != req.end_age {
-    //     let mut r1 = req.clone();
-    //     let mut r2 = req.clone();
-    //     let mid = (req.end_age - req.start_age) / 2;
-    // }
+    // FIXME: this logic could be cleaner
+    let start_age = req.start_age.unwrap_or(0);
+    let end_age = req.end_age.unwrap_or(51);
+    if start_age != end_age {
+        let mut left = req.clone();
+        let mut right = req.clone();
+        let mid = (end_age - start_age) / 2;
+
+        if mid == 0 {
+            left.end_age = left.start_age;
+            right.start_age = right.end_age;
+        } else {
+            left.end_age = Some(mid - 1);
+            right.start_age = Some(mid);
+        }
+
+        if left.start_age == Some(51) {
+            left.start_age = None
+        }
+        if left.end_age == Some(51) {
+            left.end_age = None
+        }
+        if right.start_age == Some(51) {
+            right.start_age = None
+        }
+        if right.end_age == Some(51) {
+            right.end_age = None
+        }
+
+        requests.push(left);
+        requests.push(right);
+        return requests;
+    }
 
     requests
 }

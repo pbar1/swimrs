@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, error::Error, str::FromStr, time::Duration as StdDuration};
+use std::{convert::TryFrom, error::Error, str::FromStr};
 
 use chrono::{offset::Local, Duration, NaiveDate};
 use log::debug;
