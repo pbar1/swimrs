@@ -99,6 +99,7 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
         ..toptimes::TopTimesRequest::default()
     };
     let mut requests = atomize(root_req, true, true, true, true, true, false);
+    debug!("Generated {} total requests", requests.len());
     let mut rng = rand::thread_rng();
     requests.shuffle(&mut rng);
     for r in requests {
