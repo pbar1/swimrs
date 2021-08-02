@@ -29,7 +29,7 @@ pub async fn example_individual_times() -> Result<(), Box<dyn Error>> {
 }
 
 pub async fn example_top_times() -> Result<(), Box<dyn Error>> {
-    let client = toptimes::TopTimesClient::new()?;
+    let client = toptimes::TopTimesClient::new("")?; // FIXME empty proxy string
     client.populate_cookies().await?;
 
     let req = toptimes::TopTimesRequest {

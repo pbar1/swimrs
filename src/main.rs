@@ -26,7 +26,7 @@ enum SubCommand {
 #[derive(Clap)]
 struct Mirror {
     #[clap(short, long, default_value = "1")]
-    #[clap(about = "Number of concurrent requests")]
+    #[clap(about = "Number of clients to use for processing requests [1, 10)")]
     concurrency: usize,
     #[clap(short, long)]
     #[clap(about = "Whether to execute the search requests")]

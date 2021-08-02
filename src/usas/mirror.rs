@@ -1,111 +1,189 @@
-use std::error::Error;
+use std::{collections::VecDeque, error::Error, io::BufRead, process::Stdio};
 
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{Duration, NaiveDate};
+use futures::{future::join_all, stream, StreamExt};
+use governor::{Quota, RateLimiter};
 use log::{debug, error, info, trace};
-use stopwatch::Stopwatch;
-use tokio::sync::mpsc;
+use nonzero_ext::nonzero;
+use rand::seq::SliceRandom;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    process::Command,
+    select,
+    task::JoinHandle,
+};
 
 use crate::usas::{
-    model::{Course, Gender, Stroke, SwimEvent, COURSES, DISTANCES, IND_STROKES, VALID_EVENTS},
+    model::{
+        Course, Gender, Stroke, SwimEvent, Zone, COURSES, DISTANCES, IND_STROKES, VALID_EVENTS,
+        ZONES,
+    },
     toptimes,
-    toptimes::{TopTime, TopTimesClient, TopTimesRequest},
+    toptimes::{TopTimesClient, TopTimesRequest},
 };
 
 // // TODO make sure to handle Gender in the model
 // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest
 pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Error>> {
-    let client = toptimes::TopTimesClient::new()?;
-    client.populate_cookies().await?;
+    // Launch Tor SOCKS proxies for use by our clients
+    let mut tor_handles: Vec<JoinHandle<()>> = Vec::new();
+    for i in 0..concurrency {
+        let handle = tokio::spawn(async move {
+            let stdout = Command::new("tor")
+                .args(vec![
+                    "--SocksPort",
+                    format!("{}", 53000 + i).as_str(),
+                    "--DataDirectory",
+                    format!("tordata/{}", i).as_str(),
+                ])
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap()
+                .stdout
+                .unwrap();
+            let mut lines = BufReader::new(stdout).lines();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                if line.contains("Bootstrapped 100% (done): Done") {
+                    debug!("Started Tor proxy {}", i);
+                    break;
+                }
+            }
+        });
+        tor_handles.push(handle)
+    }
+    join_all(tor_handles).await;
 
-    // Seed the request channel with its initial value
-    let (tx, mut rx) = mpsc::channel(concurrency);
+    // Create a pool of clients each proxied through Tor
+    let (tx, rx) = async_channel::unbounded();
+    let mut client_handles: Vec<JoinHandle<()>> = Vec::new();
+    for i in 0..concurrency {
+        let mut lim = RateLimiter::direct(Quota::per_second(nonzero!(1u32)));
+        let rx2 = rx.clone();
+        let proxy_addr = format!("socks5://127.0.0.1:{}", 53000 + i);
+        let client = toptimes::TopTimesClient::new(proxy_addr.as_str()).unwrap();
+        let handle = tokio::spawn(async move {
+            client.populate_cookies().await.unwrap();
+            loop {
+                select! {
+                    Ok(r) = rx2.recv() => {
+                        let file = format!("results/{}/result.csv", r);
+                        if std::path::Path::new(file.as_str()).exists() {
+                            debug!("Results file already exists: {}", file);
+                            continue;
+                        }
+                        debug!("Making request on client {}: {}", i, r);
+                        let client2 = client.clone();
+                        make_request(client2, r).await;
+                        lim.until_ready().await;
+                    }
+                    else => {
+                        break;
+                    }
+                }
+            }
+        });
+        client_handles.push(handle);
+    }
+
+    // Expand requests, shuffle them, and send them into the channel for processing
     let root_req = toptimes::TopTimesRequest {
         gender: Gender::Male,
-        from_date: NaiveDate::from_ymd(2021, 1, 1), // TODO widen this range
-        to_date: Local::now().naive_local().date() - Duration::weeks(3),
-        max_results: 100_000,
+        distance: 0,
+        stroke: Stroke::All,
+        course: Course::All,
+        from_date: NaiveDate::from_ymd(2021, 1, 1),
+        to_date: NaiveDate::from_ymd(2021, 5, 30),
+        start_age: Some(0),
+        end_age: None,
+        max_results: 5000,
         ..toptimes::TopTimesRequest::default()
     };
-    tx.send(root_req).await?;
-
-    // Receive from the request pipeline on a separate task continuously, and produce tasks to execute them
-    let (task_tx, mut task_rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        debug!("Spawning generator thread");
-
-        while let Some(req) = rx.recv().await {
-            trace!("Received request from channel: {:?}", req);
-
-            let c = client.clone();
-            let tx2 = tx.clone();
-
-            let handle = tokio::spawn(async move {
-                let req2 = req.clone();
-
-                let sw = Stopwatch::start_new();
-                let res = make_request(c, req).await;
-                info!("Request took {} ms: {:?}", sw.elapsed_ms(), req2);
-
-                match res {
-                    Some(r) => Some((req2, r)),
-                    None => {
-                        for r in divide(req2) {
-                            tx2.send(r).await.unwrap();
-                        }
-                        None
-                    }
-                }
-            });
-
-            task_tx.send(handle).unwrap();
-        }
-    });
-
-    // Drain the task channel
-    while let Some(handle) = task_rx.recv().await {
-        match handle.await {
-            Ok(o) => match o {
-                Some((req, res)) => {
-                    debug!("Found {} times for request: {:?}", res.len(), req);
-                    let dir = format!(
-                        "results/{:?}/{:?}/{:?}/{}/{}_{}/",
-                        req.gender,
-                        req.course,
-                        req.stroke,
-                        req.distance,
-                        req.from_date,
-                        req.to_date
-                    );
-                    std::fs::create_dir_all(dir.clone()).unwrap();
-                    let mut wtr = csv::Writer::from_path(dir + "result.csv").unwrap();
-                    for record in res {
-                        wtr.serialize(record).unwrap();
-                    }
-                    wtr.flush().unwrap();
-                }
-                None => debug!("No times found"),
-            },
-            Err(e) => error!("error awaiting task: {}", e),
-        }
+    let mut requests = atomize(root_req, true, true, true, true, true, false);
+    let mut rng = rand::thread_rng();
+    requests.shuffle(&mut rng);
+    for r in requests {
+        tx.send(r).await?;
     }
+    tx.close();
+
+    // TODO: Start HTTP server to expose channel depth
+
+    // Begin processing all of the requests
+    join_all(client_handles).await;
 
     Ok(())
 }
 
-async fn make_request(client: TopTimesClient, req: TopTimesRequest) -> Option<Vec<TopTime>> {
-    // let client = &client;
+async fn make_request(client: TopTimesClient, req: TopTimesRequest) {
+    let dir = format!("results/{}/", req);
+    tokio::fs::create_dir_all(dir.clone()).await.unwrap();
+    let req2 = req.clone();
     match client.search(req).await {
-        Ok(r) => Some(r),
-        Err(_) => None,
+        Ok(times) => {
+            info!("Found {} times for request: {}", times.len(), req2);
+            let mut wtr = csv::Writer::from_path(dir + "result.csv").unwrap();
+            for t in times {
+                wtr.serialize(t).unwrap();
+            }
+            wtr.flush().unwrap();
+        }
+        Err(e) => {
+            error!("Error executing search request: req={}, err={}", req2, e);
+            tokio::fs::File::create(dir + "error.txt").await.unwrap();
+        }
     }
+}
+
+/// Divides the given TopTimesRequest into the smallest possible chunks that
+/// obey the given parameters.
+fn atomize(
+    req: TopTimesRequest,
+    by_course: bool,
+    by_stroke: bool,
+    by_distance: bool,
+    by_date: bool,
+    by_age: bool,
+    by_zone: bool,
+) -> Vec<TopTimesRequest> {
+    let mut output: Vec<TopTimesRequest> = Vec::new();
+    let mut queue: VecDeque<TopTimesRequest> = VecDeque::new();
+    queue.push_back(req);
+
+    while let Some(r) = queue.pop_front() {
+        let r2 = r.clone();
+        let divided = divide(
+            r,
+            by_course,
+            by_stroke,
+            by_distance,
+            by_date,
+            by_age,
+            by_zone,
+        );
+        if divided.is_empty() {
+            output.push(r2);
+            continue;
+        }
+        queue.extend(divided);
+    }
+
+    output
 }
 
 /// Divides the given TopTimesRequest into smaller chunks.
 /// Gender -> Course -> Stroke -> Distance (pruning invalid events) -> Date range -> Age
-fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
+fn divide(
+    req: TopTimesRequest,
+    by_course: bool,
+    by_stroke: bool,
+    by_distance: bool,
+    by_date: bool,
+    by_age: bool,
+    by_zone: bool,
+) -> Vec<TopTimesRequest> {
     let mut requests: Vec<TopTimesRequest> = Vec::new();
 
-    if matches!(req.course, Course::All) {
+    if by_course && matches!(req.course, Course::All) {
         for course in COURSES {
             let mut r = req.clone();
             r.course = course;
@@ -114,7 +192,7 @@ fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
         return requests;
     }
 
-    if matches!(req.stroke, Stroke::All) {
+    if by_stroke && matches!(req.stroke, Stroke::All) {
         for stroke in IND_STROKES {
             let mut r = req.clone();
             r.stroke = stroke;
@@ -123,7 +201,7 @@ fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
         return requests;
     }
 
-    if req.distance == 0 {
+    if by_distance && req.distance == 0 {
         for distance in DISTANCES {
             let mut r = req.clone();
             let event = SwimEvent {
@@ -141,7 +219,7 @@ fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
     }
 
     // FIXME: this logic could be cleaner
-    if req.from_date != req.to_date {
+    if by_date && req.from_date != req.to_date {
         let mut left = req.clone();
         let mut right = req.clone();
         let mid = (req.to_date - req.from_date).num_days() / 2;
@@ -168,37 +246,33 @@ fn divide(req: TopTimesRequest) -> Vec<TopTimesRequest> {
         return requests;
     }
 
-    // FIXME: this logic could be cleaner
-    let start_age = req.start_age.unwrap_or(0);
-    let end_age = req.end_age.unwrap_or(51);
-    if start_age != end_age {
-        let mut left = req.clone();
-        let mut right = req.clone();
-        let mid = (end_age - start_age) / 2;
+    if by_age && req.start_age == Some(0) && req.end_age.is_none() {
+        let mut r1 = req.clone();
+        r1.start_age = Some(0);
+        r1.end_age = Some(5);
+        requests.push(r1);
 
-        if mid == 0 {
-            left.end_age = left.start_age;
-            right.start_age = right.end_age;
-        } else {
-            left.end_age = Some(mid - 1);
-            right.start_age = Some(mid);
+        for i in 6u8..30u8 {
+            let mut r = req.clone();
+            r.start_age = Some(i);
+            r.end_age = Some(i);
+            requests.push(r);
         }
 
-        if left.start_age == Some(51) {
-            left.start_age = None
-        }
-        if left.end_age == Some(51) {
-            left.end_age = None
-        }
-        if right.start_age == Some(51) {
-            right.start_age = None
-        }
-        if right.end_age == Some(51) {
-            right.end_age = None
-        }
+        let mut r2 = req.clone();
+        r2.start_age = Some(30);
+        r2.end_age = None;
+        requests.push(r2);
 
-        requests.push(left);
-        requests.push(right);
+        return requests;
+    }
+
+    if by_zone && matches!(req.zone, Zone::All) {
+        for zone in ZONES {
+            let mut r = req.clone();
+            r.zone = zone;
+            requests.push(r);
+        }
         return requests;
     }
 

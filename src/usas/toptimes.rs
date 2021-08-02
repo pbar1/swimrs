@@ -1,12 +1,22 @@
-use std::{convert::TryFrom, error::Error, str::FromStr};
+use std::{
+    convert::TryFrom,
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
 
+use anyhow::{bail, Error};
 use chrono::{offset::Local, Duration, NaiveDate};
 use log::debug;
-use reqwest::Client;
+use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::usas::model::{Course, Gender, Stroke, SwimEvent, SwimTime, TimeType, Zone, LSC};
+
+const MAIN_URL: &str = "https://www.usaswimming.org/times/popular-resources/event-rank-search";
+const KEY_URL: &str =
+    "https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes";
+const REPORT_URL: &str = "https://www.usaswimming.org/api/Reports_ReportViewer/GetReport";
 
 #[derive(Debug, Clone)]
 pub struct TopTimesClient {
@@ -84,7 +94,7 @@ pub struct TopTime {
 // ="result_rank",="full_name",="distance",="time_id",="event_desc",="swimmer_age",="swim_time_formatted",="alt_adj_swim_time_formatted",="standard_name",="meet_name",="swim_date",="club_name",="lsc_id",="foreign_yesno",="hytek_power_points",="event_id",="sanction_status"
 // ="1","Hancock, Rick",="100",="1077981",="100 BK SCY",="10",="1:01.35",="1:01.35",="""AAAA""",="1996 US NAG Records B",="1/2/1996",="Unattached",="US",="",="1004",="12",="Yes"
 #[derive(Debug, Deserialize)]
-pub struct TopTimeRaw {
+struct TopTimeRaw {
     result_rank: usize,
     full_name: String,
     distance: u16,
@@ -102,6 +112,74 @@ pub struct TopTimeRaw {
     hytek_power_points: u16,
     event_id: String,
     sanction_status: String,
+}
+
+impl TopTimesClient {
+    pub fn new(proxy_addr: &str) -> Result<Self, Error> {
+        let proxy = Proxy::all(proxy_addr)?;
+        let client = Client::builder().cookie_store(true).proxy(proxy).build()?;
+        Ok(TopTimesClient { client })
+    }
+
+    pub async fn populate_cookies(&self) -> Result<(), Error> {
+        self.client.get(MAIN_URL).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn search(&self, req: TopTimesRequest) -> Result<Vec<TopTime>, Error> {
+        let data_csv = self.fetch_raw(req).await?;
+        let mut rdr = csv::ReaderBuilder::new().from_reader(data_csv.as_bytes());
+
+        // FIXME: turn this into a chained map
+        let mut data_raw: Vec<TopTimeRaw> = vec![];
+        for r in rdr.deserialize() {
+            let rec: TopTimeRaw = r?;
+            data_raw.push(rec);
+        }
+
+        let data: Result<Vec<TopTime>, Error> =
+            data_raw.into_iter().map(TopTime::try_from).collect();
+        data
+    }
+
+    async fn fetch_raw(&self, req: TopTimesRequest) -> Result<String, Error> {
+        let body = Value::from(req);
+
+        let key = self
+            .client
+            .post(KEY_URL)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+
+        // key should be an 89-character base64 string ending in "=="
+        if key.len() != 89 && !key.ends_with("==") {
+            bail!("Expected Top Times CSV report key, found: {}", key)
+        }
+
+        let report = self
+            .client
+            .get(REPORT_URL)
+            .query(&[
+                ("Key", key),
+                ("Format", String::from("Csv")),
+                ("IsFileDownload", String::from("false")),
+            ])
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?
+            .replace("=\"", "\"");
+
+        match report.contains("Please rerun the report") {
+            true => bail!("Failed to fetch Top Times report"),
+            false => Ok(report),
+        }
+    }
 }
 
 impl Default for TopTimesRequest {
@@ -129,8 +207,34 @@ impl Default for TopTimesRequest {
     }
 }
 
+impl Display for TopTimesRequest {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let start_age = match self.start_age {
+            Some(i) => format!("{}", i),
+            None => String::from("All"),
+        };
+        let end_age = match self.end_age {
+            Some(i) => format!("{}", i),
+            None => String::from("All"),
+        };
+        write!(
+            f,
+            "{:?}/{:?}/{:?}/{}/{}_{}/{}_{}/{:?}",
+            self.gender,
+            self.course,
+            self.stroke,
+            self.distance,
+            self.from_date,
+            self.to_date,
+            start_age,
+            end_age,
+            self.zone,
+        )
+    }
+}
+
 impl TryFrom<TopTimeRaw> for TopTime {
-    type Error = Box<dyn Error>;
+    type Error = anyhow::Error;
 
     fn try_from(value: TopTimeRaw) -> Result<Self, Self::Error> {
         debug!("Converting to TopTime: {:?}", value);
@@ -212,77 +316,5 @@ impl From<TopTimesRequest> for Value {
             "MaxResults": req.max_results,
         });
         value
-    }
-}
-
-impl TopTimesClient {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let client = Client::builder().cookie_store(true).build()?;
-        Ok(TopTimesClient { client })
-    }
-
-    pub async fn populate_cookies(&self) -> Result<(), Box<dyn Error>> {
-        self.client
-            .get("https://www.usaswimming.org/times/popular-resources/event-rank-search")
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
-    }
-
-    pub async fn search(&self, req: TopTimesRequest) -> Result<Vec<TopTime>, Box<dyn Error>> {
-        let data_csv = self.fetch_raw(req).await?;
-        let mut rdr = csv::ReaderBuilder::new().from_reader(data_csv.as_bytes());
-
-        // FIXME: turn this into a chained map
-        let mut data_raw: Vec<TopTimeRaw> = vec![];
-        for r in rdr.deserialize() {
-            let rec: TopTimeRaw = r?;
-            data_raw.push(rec);
-        }
-        // TODO: exonerated up to this point, as it seems CSVs can be deserialized into TopTimeRaw
-
-        let data: Result<Vec<TopTime>, Box<dyn Error>> =
-            data_raw.into_iter().map(TopTime::try_from).collect();
-        data
-    }
-
-    async fn fetch_raw(&self, req: TopTimesRequest) -> Result<String, Box<dyn Error>> {
-        let body_json = Value::from(req);
-
-        let report_key = self
-            .client
-            .post("https://www.usaswimming.org/times/popular-resources/event-rank-search/CsvTimes")
-            .json(&body_json)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
-
-        // key should be an 89-character base64 string ending in "=="
-        if report_key.len() != 89 && !report_key.ends_with("==") {
-            return Err("Failed to fetch Top Times report CSV key".into());
-        }
-
-        let csv_raw = self
-            .client
-            .get("https://www.usaswimming.org/api/Reports_ReportViewer/GetReport")
-            .query(&[
-                ("Key", report_key),
-                ("Format", String::from("Csv")),
-                ("IsFileDownload", String::from("false")),
-            ])
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?
-            .replace("=\"", "\"");
-
-        match csv_raw.contains("Please rerun the report") {
-            true => Err("Failed to fetch Top Times report".into()),
-            false => Ok(csv_raw),
-        }
     }
 }

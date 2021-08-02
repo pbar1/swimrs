@@ -1,5 +1,6 @@
-use std::{error::Error, str::FromStr};
+use std::str::FromStr;
 
+use anyhow::{bail, Error};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -106,7 +107,7 @@ pub struct SwimTime {
 }
 
 impl FromStr for SwimEvent {
-    type Err = Box<dyn Error>;
+    type Err = Error;
 
     /// Converts a string like "100 FR SCY" to a SwimEvent.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -114,7 +115,7 @@ impl FromStr for SwimEvent {
 
         let split: Vec<&str> = s.split(' ').collect();
         if split.len() != 3 {
-            return Err(format!("Unexpected SwimEvent str: {}", s).into());
+            bail!("Unexpected SwimEvent str: {}", s);
         }
 
         let distance = split[0].parse::<u16>()?;
@@ -130,7 +131,7 @@ impl FromStr for SwimEvent {
 }
 
 impl FromStr for SwimTime {
-    type Err = Box<dyn Error>;
+    type Err = Error;
 
     /// Converts a string like "19.79", "19.79r", "1:04.02", "1:04.02r" to a SwimTime.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -147,7 +148,7 @@ impl FromStr for SwimTime {
                 let seconds = split[1].parse::<f32>()?;
                 60.0 * minutes + seconds
             }
-            _ => return Err(format!("Unexpected SwimTime str: {}", s).into()),
+            _ => bail!("Unexpected SwimTime str: {}", s),
         };
 
         Ok(SwimTime { seconds, relay })
@@ -165,6 +166,8 @@ pub const IND_STROKES: [Stroke; 5] = [
 ];
 
 pub const COURSES: [Course; 3] = [Course::SCY, Course::SCM, Course::LCM];
+
+pub const ZONES: [Zone; 4] = [Zone::Central, Zone::Eastern, Zone::Southern, Zone::Western];
 
 pub const VALID_EVENTS: [SwimEvent; 53] = [
     SwimEvent {
