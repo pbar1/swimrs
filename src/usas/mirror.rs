@@ -31,6 +31,9 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
         let handle = tokio::spawn(async move {
             let stdout = Command::new("tor")
                 .args(vec![
+                    "--torrc-file",
+                    "does_not_exist",
+                    "--allow-missing-torrc",
                     "--SocksPort",
                     format!("{}", 53000 + i).as_str(),
                     "--DataDirectory",
