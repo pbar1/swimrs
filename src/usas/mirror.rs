@@ -1,7 +1,8 @@
-use std::{collections::VecDeque, error::Error, io::BufRead, process::Stdio};
+use std::{collections::VecDeque, error::Error, process::Stdio};
 
 use chrono::{Duration, NaiveDate};
-use futures::{future::join_all, stream, StreamExt};
+use dashmap::DashSet;
+use futures::{future::join_all, StreamExt};
 use governor::{Quota, RateLimiter};
 use log::{debug, error, info, trace};
 use nonzero_ext::nonzero;
@@ -105,10 +106,27 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     };
     let mut requests = atomize(root_req, true, true, true, true, true, false);
     debug!("Generated {} total requests", requests.len());
+    let mut set = DashSet::new();
+    for entry in glob::glob("**/result.csv").expect("failed to read glob pattern") {
+        match entry {
+            Ok(path) => {
+                set.insert(
+                    path.to_str()
+                        .unwrap()
+                        .to_string()
+                        .replace("results/", "")
+                        .replace("/result.csv", ""),
+                );
+            }
+            Err(e) => error!("Glob result error: {:?}", e),
+        };
+    }
     let mut rng = rand::thread_rng();
     requests.shuffle(&mut rng);
     for r in requests {
-        tx.send(r).await?;
+        if !set.contains(r.to_string().as_str()) {
+            tx.send(r).await?;
+        }
     }
     tx.close();
 
