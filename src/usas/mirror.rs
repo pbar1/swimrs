@@ -6,6 +6,8 @@ use governor::{Quota, RateLimiter};
 use log::{debug, error, info, trace};
 use nonzero_ext::nonzero;
 use rand::seq::SliceRandom;
+use signal_hook::consts::signal::*;
+use signal_hook_tokio::Signals;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -76,7 +78,7 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
                         }
                         debug!("Making request on client {}: {}", i, r);
                         let client2 = client.clone();
-                        make_request(client2, r).await;
+                        make_request(client2, r, dry_run).await;
                         lim.until_ready().await;
                     }
                     else => {
@@ -111,6 +113,11 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     tx.close();
 
     // TODO: Start HTTP server to expose channel depth
+    let signals = Signals::new(&[SIGUSR1])?;
+    // let signal_handle = signals.handle();
+    let signals_task = tokio::spawn(handle_signals(signals, tx.clone()));
+    client_handles.push(signals_task);
+    // handle.close();
 
     // Begin processing all of the requests
     join_all(client_handles).await;
@@ -118,7 +125,10 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-async fn make_request(client: TopTimesClient, req: TopTimesRequest) {
+async fn make_request(client: TopTimesClient, req: TopTimesRequest, dry_run: bool) {
+    if dry_run {
+        return;
+    }
     let dir = format!("results/{}/", req);
     tokio::fs::create_dir_all(dir.clone()).await.unwrap();
     let req2 = req.clone();
@@ -281,4 +291,16 @@ fn divide(
     }
 
     requests
+}
+
+async fn handle_signals(signals: Signals, tx: async_channel::Sender<TopTimesRequest>) {
+    let mut signals = signals.fuse();
+    while let Some(signal) = signals.next().await {
+        match signal {
+            SIGUSR1 => {
+                info!("Request channel length: {}", tx.len());
+            }
+            _ => unreachable!(),
+        }
+    }
 }
