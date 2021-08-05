@@ -1,5 +1,6 @@
 use std::{collections::VecDeque, error::Error, process::Stdio};
 
+use async_channel::Sender;
 use chrono::{Duration, NaiveDate};
 use dashmap::DashSet;
 use futures::{future::join_all, StreamExt};
@@ -25,7 +26,7 @@ use crate::usas::{
     toptimes::{TopTimesClient, TopTimesRequest},
 };
 
-// // TODO make sure to handle Gender in the model
+// TODO make sure to handle Gender in the model
 // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest
 pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Error>> {
     // Launch Tor SOCKS proxies for use by our clients
@@ -50,7 +51,7 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
             let mut lines = BufReader::new(stdout).lines();
             while let Some(line) = lines.next_line().await.unwrap() {
                 if line.contains("Bootstrapped 100% (done): Done") {
-                    debug!("Started Tor proxy {}", i);
+                    info!("Started Tor proxy {}", i);
                     break;
                 }
             }
@@ -63,7 +64,8 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     let (tx, rx) = async_channel::unbounded();
     let mut client_handles: Vec<JoinHandle<()>> = Vec::new();
     for i in 0..concurrency {
-        let mut lim = RateLimiter::direct(Quota::per_second(nonzero!(1u32)));
+        // let lim = RateLimiter::direct(Quota::per_minute(nonzero!(90u32)));
+        let tx2 = tx.clone();
         let rx2 = rx.clone();
         let proxy_addr = format!("socks5://127.0.0.1:{}", 53000 + i);
         let client = toptimes::TopTimesClient::new(proxy_addr.as_str()).unwrap();
@@ -72,15 +74,10 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
             loop {
                 select! {
                     Ok(r) = rx2.recv() => {
-                        let file = format!("results/{}/result.csv", r);
-                        if std::path::Path::new(file.as_str()).exists() {
-                            debug!("Results file already exists: {}", file);
-                            continue;
-                        }
                         debug!("Making request on client {}: {}", i, r);
                         let client2 = client.clone();
-                        make_request(client2, r, dry_run).await;
-                        lim.until_ready().await;
+                        make_request(client2, r, dry_run, tx2.clone()).await;
+                        // lim.until_ready().await;
                     }
                     else => {
                         break;
@@ -97,8 +94,8 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
         distance: 0,
         stroke: Stroke::All,
         course: Course::All,
-        from_date: NaiveDate::from_ymd(2021, 1, 1),
-        to_date: NaiveDate::from_ymd(2021, 5, 30),
+        from_date: NaiveDate::from_ymd(2020, 1, 1),
+        to_date: NaiveDate::from_ymd(2020, 12, 31),
         start_age: Some(0),
         end_age: None,
         max_results: 5000,
@@ -106,7 +103,7 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     };
     let mut requests = atomize(root_req, true, true, true, true, true, false);
     debug!("Generated {} total requests", requests.len());
-    let mut set = DashSet::new();
+    let set = DashSet::new();
     for entry in glob::glob("**/result.csv").expect("failed to read glob pattern") {
         match entry {
             Ok(path) => {
@@ -128,14 +125,12 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
             tx.send(r).await?;
         }
     }
-    tx.close();
+    // tx.close();
 
     // TODO: Start HTTP server to expose channel depth
     let signals = Signals::new(&[SIGUSR1])?;
-    // let signal_handle = signals.handle();
     let signals_task = tokio::spawn(handle_signals(signals, tx.clone()));
     client_handles.push(signals_task);
-    // handle.close();
 
     // Begin processing all of the requests
     join_all(client_handles).await;
@@ -143,7 +138,12 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-async fn make_request(client: TopTimesClient, req: TopTimesRequest, dry_run: bool) {
+async fn make_request(
+    client: TopTimesClient,
+    req: TopTimesRequest,
+    dry_run: bool,
+    tx: Sender<TopTimesRequest>,
+) {
     if dry_run {
         return;
     }
@@ -160,8 +160,8 @@ async fn make_request(client: TopTimesClient, req: TopTimesRequest, dry_run: boo
             wtr.flush().unwrap();
         }
         Err(e) => {
-            error!("Error executing search request: req={}, err={}", req2, e);
-            tokio::fs::File::create(dir + "error.txt").await.unwrap();
+            error!("Error for request {}: {}", req2, e);
+            tx.send(req2).await.unwrap();
         }
     }
 }
