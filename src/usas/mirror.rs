@@ -1,11 +1,11 @@
 use std::{collections::VecDeque, error::Error, process::Stdio};
 
 use async_channel::Sender;
-use chrono::{Duration, NaiveDate};
+use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use dashmap::DashSet;
 use futures::{future::join_all, StreamExt};
 use governor::{Quota, RateLimiter};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use nonzero_ext::nonzero;
 use rand::seq::SliceRandom;
 use signal_hook::consts::signal::*;
@@ -89,19 +89,23 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
     }
 
     // Expand requests, shuffle them, and send them into the channel for processing
-    let root_req = toptimes::TopTimesRequest {
-        gender: Gender::Male,
-        distance: 0,
-        stroke: Stroke::All,
-        course: Course::All,
-        from_date: NaiveDate::from_ymd(2020, 1, 1),
-        to_date: NaiveDate::from_ymd(2020, 12, 31),
-        start_age: Some(0),
-        end_age: None,
-        max_results: 5000,
-        ..toptimes::TopTimesRequest::default()
-    };
-    let mut requests = atomize(root_req, true, true, true, true, true, false);
+    // let root_req = toptimes::TopTimesRequest {
+    //     gender: Gender::Male,
+    //     distance: 0,
+    //     stroke: Stroke::All,
+    //     course: Course::All,
+    //     from_date: NaiveDate::from_ymd(2020, 1, 1),
+    //     to_date: NaiveDate::from_ymd(2020, 12, 31),
+    //     start_age: Some(0),
+    //     end_age: None,
+    //     max_results: 5000,
+    //     ..toptimes::TopTimesRequest::default()
+    // };
+    // let mut requests = atomize(root_req, true, true, true, true, true, false);
+    let mut requests = gen_requests_smart(
+        NaiveDate::from_ymd(2020, 1, 1),
+        NaiveDate::from_ymd(2020, 12, 31),
+    );
     debug!("Generated {} total requests", requests.len());
     let set = DashSet::new();
     for entry in glob::glob("**/result.csv").expect("failed to read glob pattern") {
@@ -153,6 +157,12 @@ async fn make_request(
     match client.search(req).await {
         Ok(times) => {
             info!("Found {} times for request: {}", times.len(), req2);
+            if times.len() >= 4900 {
+                warn!("Request possibly too large, writing warning: {}", req2);
+                tokio::fs::File::create(dir.clone() + "warning.txt")
+                    .await
+                    .unwrap();
+            }
             let mut wtr = csv::Writer::from_path(dir + "result.csv").unwrap();
             for t in times {
                 wtr.serialize(t).unwrap();
@@ -311,6 +321,80 @@ fn divide(
     requests
 }
 
+/// Generates a list of TopTimesRequests necessary to fetch all swimming times within a date range.
+fn gen_requests_smart(from_date: NaiveDate, to_date: NaiveDate) -> Vec<TopTimesRequest> {
+    let mut requests: Vec<TopTimesRequest> = Vec::new();
+
+    let age_range = [
+        (0, 7),
+        (8, 8),
+        (9, 9),
+        (10, 10),
+        (11, 11),
+        (12, 12),
+        (13, 13),
+        (14, 14),
+        (15, 15),
+        (16, 16),
+        (17, 17),
+        (18, 18),
+        (19, 19),
+        (20, 20),
+        (21, 21),
+        (22, 22),
+        (23, 23),
+        (24, 24),
+        (25, 51),
+    ];
+
+    let num_days = (to_date - from_date).num_days() as usize + 1;
+    for d in from_date.iter_days().take(num_days) {
+        for (start_age, end_age) in age_range {
+            let actual_end_age = match end_age {
+                51 => None,
+                _ => Some(end_age as u8),
+            };
+            let r = TopTimesRequest {
+                gender: Gender::Male,
+                from_date: d,
+                to_date: d,
+                start_age: Some(start_age as u8),
+                end_age: actual_end_age,
+                max_results: 5000,
+                ..TopTimesRequest::default()
+            };
+
+            let mut fr = r.clone();
+            fr.stroke = Stroke::Freestyle;
+            let mut bk = r.clone();
+            bk.stroke = Stroke::Backstroke;
+            let mut br = r.clone();
+            br.stroke = Stroke::Breaststroke;
+            let mut fl = r.clone();
+            fl.stroke = Stroke::Butterfly;
+            let mut im = r.clone();
+            im.stroke = Stroke::IndividualMedley;
+
+            // FIXME: add back in  400, 500, 800, 1000, 1500, 1650
+            for dist in [50u16, 100, 200] {
+                let mut fr_clone = fr.clone();
+                fr_clone.distance = dist;
+                requests.push(fr_clone)
+            }
+            for dist in [50u16, 100, 200] {
+                let mut bk_clone = bk.clone();
+                bk_clone.distance = dist;
+                requests.push(bk_clone)
+            }
+            requests.push(br);
+            requests.push(fl);
+            requests.push(im);
+        }
+    }
+
+    requests
+}
+
 async fn handle_signals(signals: Signals, tx: async_channel::Sender<TopTimesRequest>) {
     let mut signals = signals.fuse();
     while let Some(signal) = signals.next().await {
@@ -320,5 +404,15 @@ async fn handle_signals(signals: Signals, tx: async_channel::Sender<TopTimesRequ
             }
             _ => unreachable!(),
         }
+    }
+}
+
+pub fn debug() {
+    let from_date = NaiveDate::from_ymd(2020, 1, 1);
+    let to_date = NaiveDate::from_ymd(2020, 12, 31);
+    let requests = gen_requests_smart(from_date, to_date);
+    println!("Number of requests generated: {}", requests.len());
+    for r in requests {
+        println!("{}", r);
     }
 }

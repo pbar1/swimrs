@@ -31,6 +31,9 @@ struct Mirror {
     #[clap(short, long)]
     #[clap(about = "Whether to execute the search requests")]
     dry_run: bool,
+    #[clap(short, long)]
+    #[clap(about = "Enables per-client rate limiting to 1 request/s")]
+    enable_rate_limit: bool,
 }
 
 #[tokio::main]
