@@ -7,9 +7,11 @@ use std::{
 use anyhow::{bail, Error};
 use chrono::{offset::Local, Duration, NaiveDate};
 use log::debug;
+use metrics::{decrement_gauge, gauge, histogram, increment_counter, increment_gauge};
 use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use stopwatch::Stopwatch;
 
 use crate::usas::model::{Course, Gender, Stroke, SwimEvent, SwimTime, TimeType, Zone, LSC};
 
@@ -24,7 +26,7 @@ pub struct TopTimesClient {
 }
 
 /// Input for Top Times / Event Rank Search.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopTimesRequest {
     /// Gender to search for.
     pub gender: Gender,
@@ -122,7 +124,11 @@ impl TopTimesClient {
     }
 
     pub async fn populate_cookies(&self) -> Result<(), Error> {
+        let mut sw = Stopwatch::start_new();
         self.client.get(MAIN_URL).send().await?.error_for_status()?;
+        sw.stop();
+        histogram!("usas_toptimes_request_duration_seconds", sw.elapsed(), "endpoint" => MAIN_URL);
+        increment_counter!("usas_toptimes_requests", "endpoint" => MAIN_URL);
         Ok(())
     }
 
@@ -145,6 +151,7 @@ impl TopTimesClient {
     async fn fetch_raw(&self, req: TopTimesRequest) -> Result<String, Error> {
         let body = Value::from(req);
 
+        let mut key_sw = Stopwatch::start_new();
         let key = self
             .client
             .post(KEY_URL)
@@ -154,12 +161,16 @@ impl TopTimesClient {
             .error_for_status()?
             .text()
             .await?;
+        key_sw.stop();
+        histogram!("usas_toptimes_request_duration_seconds", key_sw.elapsed(), "endpoint" => KEY_URL);
+        increment_counter!("usas_toptimes_requests", "endpoint" => KEY_URL);
 
         // key should be an 89-character base64 string ending in "=="
         if key.len() != 89 && !key.ends_with("==") {
             bail!("Expected Top Times CSV report key, found: {}", key)
         }
 
+        let mut report_sw = Stopwatch::start_new();
         let report = self
             .client
             .get(REPORT_URL)
@@ -174,6 +185,9 @@ impl TopTimesClient {
             .text()
             .await?
             .replace("=\"", "\"");
+        report_sw.stop();
+        histogram!("usas_toptimes_request_duration_seconds", report_sw.elapsed(), "endpoint" => REPORT_URL);
+        increment_counter!("usas_toptimes_requests", "endpoint" => REPORT_URL);
 
         match report.contains("Please rerun the report") {
             true => bail!("Failed to fetch Top Times report"),

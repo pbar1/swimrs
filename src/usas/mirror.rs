@@ -1,4 +1,6 @@
-use std::{collections::VecDeque, error::Error, process::Stdio};
+use std::{
+    collections::VecDeque, error::Error, process::Stdio, thread, time::Duration as StdDuration,
+};
 
 use async_channel::Sender;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
@@ -6,10 +8,16 @@ use dashmap::DashSet;
 use futures::{future::join_all, StreamExt};
 use governor::{Quota, RateLimiter};
 use log::{debug, error, info, trace, warn};
+use metrics::{
+    decrement_gauge, gauge, histogram, increment_counter, increment_gauge, register_counter,
+    register_histogram,
+};
+use metrics_exporter_prometheus::PrometheusBuilder;
 use nonzero_ext::nonzero;
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, thread_rng, Rng};
 use signal_hook::consts::signal::*;
 use signal_hook_tokio::Signals;
+use stopwatch::Stopwatch;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::Command,
@@ -29,6 +37,13 @@ use crate::usas::{
 // TODO make sure to handle Gender in the model
 // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest
 pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Error>> {
+    // Initialize Prometheus metrics endpoint at localhost:9000
+    // tracing_subscriber::fmt::init();
+    let builder = PrometheusBuilder::new();
+    builder
+        .install()
+        .expect("failed to install Prometheus recorder");
+
     // Launch Tor SOCKS proxies for use by our clients
     let mut tor_handles: Vec<JoinHandle<()>> = Vec::new();
     for i in 0..concurrency {
@@ -52,6 +67,7 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
             while let Some(line) = lines.next_line().await.unwrap() {
                 if line.contains("Bootstrapped 100% (done): Done") {
                     info!("Started Tor proxy {}", i);
+                    increment_gauge!("tor_proxies", 1.0);
                     break;
                 }
             }
@@ -77,6 +93,9 @@ pub async fn mirror(concurrency: usize, dry_run: bool) -> Result<(), Box<dyn Err
                         debug!("Making request on client {}: {}", i, r);
                         let client2 = client.clone();
                         make_request(client2, r, dry_run, tx2.clone()).await;
+                        let depth = tx2.len();
+                        gauge!("mirror_request_queue_depth", depth as f64);
+                        trace!("Request queue depth: {}", depth);
                         // lim.until_ready().await;
                     }
                     else => {
@@ -154,10 +173,17 @@ async fn make_request(
     let dir = format!("results/{}/", req);
     tokio::fs::create_dir_all(dir.clone()).await.unwrap();
     let req2 = req.clone();
-    match client.search(req).await {
+    let mut sw = Stopwatch::start_new();
+    let result = client.search(req).await;
+    sw.stop();
+    match result {
         Ok(times) => {
+            let times_found = times.len();
+            histogram!("mirror_times_found", times_found as f64);
+            histogram!("mirror_request_duration_seconds", sw.elapsed(), "result" => "success");
             info!("Found {} times for request: {}", times.len(), req2);
-            if times.len() >= 4900 {
+            if times_found >= 4900 {
+                increment_counter!("mirror_large_results");
                 warn!("Request possibly too large, writing warning: {}", req2);
                 tokio::fs::File::create(dir.clone() + "warning.txt")
                     .await
@@ -170,14 +196,14 @@ async fn make_request(
             wtr.flush().unwrap();
         }
         Err(e) => {
+            histogram!("mirror_request_duration_seconds", sw.elapsed(), "result" => "error");
             error!("Error for request {}: {}", req2, e);
             tx.send(req2).await.unwrap();
         }
     }
 }
 
-/// Divides the given TopTimesRequest into the smallest possible chunks that
-/// obey the given parameters.
+/// Divides the given TopTimesRequest into the smallest possible chunks that obey the given parameters.
 fn atomize(
     req: TopTimesRequest,
     by_course: bool,
@@ -190,7 +216,6 @@ fn atomize(
     let mut output: Vec<TopTimesRequest> = Vec::new();
     let mut queue: VecDeque<TopTimesRequest> = VecDeque::new();
     queue.push_back(req);
-
     while let Some(r) = queue.pop_front() {
         let r2 = r.clone();
         let divided = divide(
@@ -208,7 +233,6 @@ fn atomize(
         }
         queue.extend(divided);
     }
-
     output
 }
 
@@ -400,7 +424,9 @@ async fn handle_signals(signals: Signals, tx: async_channel::Sender<TopTimesRequ
     while let Some(signal) = signals.next().await {
         match signal {
             SIGUSR1 => {
-                info!("Request channel length: {}", tx.len());
+                let depth = tx.len();
+                gauge!("mirror_request_queue_depth", depth as f64);
+                info!("Request queue depth: {}", depth);
             }
             _ => unreachable!(),
         }
