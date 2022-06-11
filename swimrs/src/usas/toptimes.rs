@@ -78,7 +78,7 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
     let html = Html::parse_fragment(&raw_html);
     let sel = match Selector::parse("tr > td.usas-hide-mobile") {
         Ok(x) => x,
-        Err(_) => bail!("error parsing tbody selector"),
+        Err(_) => bail!("error parsing selector"),
     };
 
     let rows = html
@@ -87,65 +87,49 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
         .tuples::<(_, _, _, _, _, _, _, _, _, _, _, _)>()
         .collect::<Vec<_>>();
 
-    // TODO: try_fold with Rayon is mind-bending
-    let mut times: Vec<TopTime> = Vec::new();
-    for row in rows {
-        let (
-            rank,
-            time,
-            name,
-            foreign,
-            age,
-            lsc,
-            event,
-            team_name,
-            meet_name,
-            time_standard,
-            sanctioned,
-            script,
-        ) = row;
+    rows.into_par_iter()
+        .map(|row| -> Result<TopTime> {
+            let rank = Some(row.0.parse::<usize>()?);
+            let SwimTime { seconds, relay } = SwimTime::from_str(&row.1)?;
+            let swimmer_name = row.2.trim().replace("<br>", "");
+            let foreign = Some(row.3 == "Yes");
+            let age = row.4.parse::<u8>()?;
+            let lsc = Some(LSC::from_str(&row.5)?);
+            let SwimEvent(distance, stroke, course) = SwimEvent::from_str(&row.6)?;
+            let time_standard = Some(row.9);
+            let sanctioned = Some(row.10 == "Yes");
 
-        let rank = Some(rank.parse::<usize>()?);
-        let SwimTime { seconds, relay } = SwimTime::from_str(&time)?;
-        let swimmer_name = name.trim().replace("<br>", "");
-        let foreign = Some(foreign == "Yes");
-        let age = age.parse::<u8>()?;
-        let lsc = Some(LSC::from_str(&lsc)?);
-        let SwimEvent(distance, stroke, course) = SwimEvent::from_str(&event)?;
-        let sanctioned = Some(sanctioned == "Yes");
-        let time_standard = Some(time_standard);
+            // FIXME: Parse the script block for these
+            let swimmer_id = Some(0usize);
+            let meet_id = Some(0usize);
+            let date = NaiveDate::from_ymd(2020, 2, 20);
 
-        // FIXME: Parse the script block for these
-        let swimmer_id = Some(0usize);
-        let meet_id = Some(0usize);
-        let date = NaiveDate::from_ymd(2020, 2, 20);
-
-        times.push(TopTime {
-            age,
-            course,
-            date,
-            distance,
-            foreign,
-            gender: gender.clone(),
-            lsc,
-            meet_id,
-            meet_name,
-            power_points: None,
-            rank,
-            relay,
-            sanctioned,
-            stroke,
-            swimmer_id,
-            swimmer_name,
-            team_name,
-            time: seconds,
-            time_alt_adj: None,
-            time_id: None,
-            time_standard,
-        });
-    }
-
-    Ok(times)
+            let top_time = TopTime {
+                age,
+                course,
+                date,
+                distance,
+                foreign,
+                gender: gender.clone(),
+                lsc,
+                meet_id,
+                meet_name: row.8,
+                power_points: None,
+                rank,
+                relay,
+                sanctioned,
+                stroke,
+                swimmer_id,
+                swimmer_name,
+                team_name: row.7,
+                time: seconds,
+                time_alt_adj: None,
+                time_id: None,
+                time_standard,
+            };
+            Ok(top_time)
+        })
+        .collect::<Result<Vec<TopTime>>>()
 }
 
 impl TopTimesClient {
