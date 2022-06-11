@@ -81,13 +81,11 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
         Err(_) => bail!("error parsing selector"),
     };
 
-    let rows = html
-        .select(&sel)
+    html.select(&sel)
         .map(|e| e.inner_html())
         .tuples::<(_, _, _, _, _, _, _, _, _, _, _, _)>()
-        .collect::<Vec<_>>();
-
-    rows.into_par_iter()
+        .collect::<Vec<_>>()
+        .into_par_iter()
         .map(|row| -> Result<TopTime> {
             let rank = Some(row.0.parse::<usize>()?);
             let SwimTime { seconds, relay } = SwimTime::from_str(&row.1)?;
