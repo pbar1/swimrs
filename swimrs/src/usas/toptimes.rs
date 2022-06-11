@@ -4,9 +4,8 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use chrono::{offset::Local, NaiveDate};
-use itertools::Itertools;
 use maplit::hashmap;
 use rayon::prelude::*;
 use reqwest::{Client, ClientBuilder};
@@ -83,19 +82,24 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
 
     html.select(&sel)
         .map(|e| e.inner_html())
-        .tuples::<(_, _, _, _, _, _, _, _, _, _, _, _)>()
         .collect::<Vec<_>>()
         .into_par_iter()
+        .chunks(12)
         .map(|row| -> Result<TopTime> {
-            let rank = Some(row.0.parse::<usize>()?);
-            let SwimTime { seconds, relay } = SwimTime::from_str(&row.1)?;
-            let swimmer_name = row.2.trim().replace("<br>", "");
-            let foreign = Some(row.3 == "Yes");
-            let age = row.4.parse::<u8>()?;
-            let lsc = Some(LSC::from_str(&row.5)?);
-            let SwimEvent(distance, stroke, course) = SwimEvent::from_str(&row.6)?;
-            let time_standard = Some(row.9);
-            let sanctioned = Some(row.10 == "Yes");
+            let rank = Some(row.get(0).context("no rank")?.parse::<usize>()?);
+            let SwimTime { seconds, relay } = SwimTime::from_str(&row.get(1).context("no time")?)?;
+            let swimmer_name = row
+                .get(2)
+                .context("no swimmer name")?
+                .trim()
+                .replace("<br>", "");
+            let foreign = Some(row.get(3).context("no foreign")? == "Yes");
+            let age = row.get(4).context("no age")?.parse::<u8>()?;
+            let lsc = Some(LSC::from_str(&row.get(5).context("no lsc")?)?);
+            let SwimEvent(distance, stroke, course) =
+                SwimEvent::from_str(&row.get(6).context("no event")?)?;
+            let time_standard = Some(row.get(9).context("no standard")?.to_owned());
+            let sanctioned = Some(row.get(10).context("no sanctioned")? == "Yes");
 
             // FIXME: Parse the script block for these
             let swimmer_id = Some(0usize);
@@ -111,7 +115,7 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
                 gender: gender.clone(),
                 lsc,
                 meet_id,
-                meet_name: row.8,
+                meet_name: row.get(8).context("no meet name")?.to_owned(),
                 power_points: None,
                 rank,
                 relay,
@@ -119,7 +123,7 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
                 stroke,
                 swimmer_id,
                 swimmer_name,
-                team_name: row.7,
+                team_name: row.get(7).context("no team name")?.to_owned(),
                 time: seconds,
                 time_alt_adj: None,
                 time_id: None,
