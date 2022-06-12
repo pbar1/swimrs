@@ -4,12 +4,11 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use chrono::{offset::Local, NaiveDate};
+use itertools::Itertools;
 use maplit::hashmap;
-use rayon::prelude::*;
 use reqwest::{Client, ClientBuilder};
-use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -69,39 +68,31 @@ pub struct TopTime {
     pub time_standard: Option<String>,
 }
 
+// 0----1----2---------3-------4---5---6-----7---------8---------9-------------10---------11
+// rank|time|full_name|foreign|age|lsc|event|team_name|meet_name|time_standard|sanctioned|script
 pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>> {
-    if raw_html.contains("No times found") {
-        return Ok(vec![]);
-    }
-
-    let html = Html::parse_fragment(&raw_html);
-    let sel = match Selector::parse("tr > td.usas-hide-mobile") {
-        Ok(x) => x,
-        Err(_) => bail!("error parsing selector"),
-    };
-
-    html.select(&sel)
-        .map(|e| e.inner_html())
-        .collect::<Vec<_>>()
-        .into_par_iter()
-        .chunks(12)
-        .map(|row| -> Result<TopTime> {
-            let rank = Some(row.get(0).context("no rank")?.parse::<usize>()?);
-            let SwimTime { seconds, relay } = SwimTime::from_str(&row.get(1).context("no time")?)?;
-            let swimmer_name = row
-                .get(2)
-                .context("no swimmer name")?
-                .trim()
-                .replace("<br>", "");
-            let foreign = Some(row.get(3).context("no foreign")? == "Yes");
-            let age = row.get(4).context("no age")?.parse::<u8>()?;
-            let lsc = Some(LSC::from_str(&row.get(5).context("no lsc")?)?);
-            let SwimEvent(distance, stroke, course) =
-                SwimEvent::from_str(&row.get(6).context("no event")?)?;
-            let time_standard = Some(row.get(9).context("no standard")?.to_owned());
-            let sanctioned = Some(row.get(10).context("no sanctioned")? == "Yes");
+    let dom = tl::parse(&raw_html, tl::ParserOptions::default())?;
+    let parser = dom.parser();
+    dom.query_selector("td.usas-hide-mobile")
+        .context("error parsing selector")?
+        .filter_map(|x| x.get(parser))
+        .tuples::<(_, _, _, _, _, _, _, _, _, _, _, _)>()
+        .map(|r| {
+            let rank = Some(r.0.inner_text(parser).parse::<usize>()?);
+            let SwimTime { seconds, relay } = SwimTime::from_str(&r.1.inner_text(parser))?;
+            let swimmer_name = r.2.inner_text(parser).trim().replace("<br>", "");
+            let foreign = Some(r.3.inner_text(parser) == "Yes");
+            let age = r.4.inner_text(parser).parse::<u8>()?;
+            let lsc = Some(LSC::from_str(&r.5.inner_text(parser))?);
+            let SwimEvent(distance, stroke, course) = SwimEvent::from_str(&r.6.inner_text(parser))?;
+            let team_name = r.7.inner_text(parser).to_string();
+            let meet_name = r.8.inner_text(parser).to_string();
+            let time_standard = Some(r.9.inner_text(parser).to_string());
+            let sanctioned = Some(r.10.inner_text(parser) == "Yes");
 
             // FIXME: Parse the script block for these
+            // let script = row.get(11).context("no script")?;
+            // let split = script.split(',').collect::<String>().trim;
             let swimmer_id = Some(0usize);
             let meet_id = Some(0usize);
             let date = NaiveDate::from_ymd(2020, 2, 20);
@@ -115,7 +106,7 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
                 gender: gender.clone(),
                 lsc,
                 meet_id,
-                meet_name: row.get(8).context("no meet name")?.to_owned(),
+                meet_name,
                 power_points: None,
                 rank,
                 relay,
@@ -123,7 +114,7 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
                 stroke,
                 swimmer_id,
                 swimmer_name,
-                team_name: row.get(7).context("no team name")?.to_owned(),
+                team_name,
                 time: seconds,
                 time_alt_adj: None,
                 time_id: None,
@@ -379,13 +370,27 @@ mod tests {
     fn test_parse_top_times_small() {
         let html = std::fs::read_to_string("testdata/top_times_small.html").unwrap();
         let times = parse_top_times(html, Gender::Male).unwrap();
-        assert_eq!(times.get(0).unwrap().swimmer_name, "Phelps, Michael");
+
+        let first = times.first().unwrap();
+        assert_eq!(first.swimmer_name, "Phelps, Michael");
+        assert!((first.time - 102.96).abs() < 0.01);
+
+        let last = times.last().unwrap();
+        assert_eq!(last.swimmer_name, "Mebarek, Mahrez");
+        assert!((last.time - 112.66).abs() < 0.01);
     }
 
     #[test]
     fn test_parse_top_times_large() {
         let html = std::fs::read_to_string("testdata/top_times_large.html").unwrap();
         let times = parse_top_times(html, Gender::Female).unwrap();
-        assert_eq!(times.get(0).unwrap().swimmer_name, "Zielinski, Logananne");
+
+        let first = times.first().unwrap();
+        assert_eq!(first.swimmer_name, "Zielinski, Logananne");
+        assert!((first.time - 26.58).abs() < 0.01);
+
+        let last = times.last().unwrap();
+        assert_eq!(last.swimmer_name, "Olson, Kennedy");
+        assert!((last.time - 431.72).abs() < 0.01);
     }
 }

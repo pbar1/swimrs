@@ -8,9 +8,9 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 maplit = "1"
 num_enum = "0.5"
-rayon = "1"
+itertools = "0.10"
+tl = {version = "0.7", features = ["simd"] }
 reqwest = { version = "0.11", default-features = false, features = ["cookies", "rustls-tls"] }
-scraper = "0.13"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0", features = ["derive"] }
 tracing = "0.1"
