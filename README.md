@@ -1,3 +1,3 @@
 # swimrs
 
-Swimming times utility written in Rust.
+CLI and Rust library for fetching swimming times from USA Swimming.
