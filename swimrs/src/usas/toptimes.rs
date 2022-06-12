@@ -363,13 +363,23 @@ mod tests {
         };
         let times = client.fetch_top_times(req).await.unwrap();
 
-        assert_eq!(times.get(0).unwrap().swimmer_name, "Phelps, Michael");
+        assert_eq!(times.len(), 16);
+
+        let first = times.first().unwrap();
+        assert_eq!(first.swimmer_name, "Phelps, Michael");
+        assert!((first.time - 102.96).abs() < 0.01);
+
+        let last = times.last().unwrap();
+        assert_eq!(last.swimmer_name, "Mebarek, Mahrez");
+        assert!((last.time - 112.66).abs() < 0.01);
     }
 
     #[test]
     fn test_parse_top_times_small() {
         let html = std::fs::read_to_string("testdata/top_times_small.html").unwrap();
         let times = parse_top_times(html, Gender::Male).unwrap();
+
+        assert_eq!(times.len(), 16);
 
         let first = times.first().unwrap();
         assert_eq!(first.swimmer_name, "Phelps, Michael");
@@ -384,6 +394,8 @@ mod tests {
     fn test_parse_top_times_large() {
         let html = std::fs::read_to_string("testdata/top_times_large.html").unwrap();
         let times = parse_top_times(html, Gender::Female).unwrap();
+
+        assert_eq!(times.len(), 3957);
 
         let first = times.first().unwrap();
         assert_eq!(first.swimmer_name, "Zielinski, Logananne");
