@@ -2,3 +2,4 @@
 /results
 *.log
 /tordata
+/.vscode
