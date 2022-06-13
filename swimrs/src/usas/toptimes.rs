@@ -7,7 +7,9 @@ use std::{
 use anyhow::{Context, Result};
 use chrono::{offset::Local, NaiveDate};
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use maplit::hashmap;
+use regex::Regex;
 use reqwest::{Client, ClientBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -18,6 +20,13 @@ const DATE_FMT: &str = "%-m/%-d/%Y";
 const URL_PAGE: &str = "https://www.usaswimming.org/times/popular-resources/event-rank-search";
 const URL_API: &str =
     "https://www.usaswimming.org/api/Times_TimesSearchTopTimesEventRankSearch/ListTimes";
+
+lazy_static! {
+    static ref RE_SCRIPT: Regex = Regex::new(
+        r"(?s)GetProgression\(.*?, .*?, (.*?),.*?GetIndividualReport\(.*?, (.*?),.*'(.*?)'\)"
+    )
+    .unwrap();
+}
 
 #[derive(Debug, Clone)]
 pub struct TopTimesClient {
@@ -90,12 +99,26 @@ pub fn parse_top_times(raw_html: String, gender: Gender) -> Result<Vec<TopTime>>
             let time_standard = Some(r.9.inner_text(parser).to_string());
             let sanctioned = Some(r.10.inner_text(parser) == "Yes");
 
-            // FIXME: Parse the script block for these
-            // let script = row.get(11).context("no script")?;
-            // let split = script.split(',').collect::<String>().trim;
-            let swimmer_id = Some(0usize);
-            let meet_id = Some(0usize);
-            let date = NaiveDate::from_ymd(2020, 2, 20);
+            let script = r.11.inner_html(parser);
+            let caps = RE_SCRIPT
+                .captures(&script)
+                .context("failed to match regex")?;
+            let swimmer_id = Some(
+                caps.get(1)
+                    .context("swimmer_id not found")?
+                    .as_str()
+                    .parse::<usize>()?,
+            );
+            let meet_id = Some(
+                caps.get(2)
+                    .context("meet_id not found")?
+                    .as_str()
+                    .parse::<usize>()?,
+            );
+            let date = NaiveDate::parse_from_str(
+                caps.get(3).context("date not found")?.as_str(),
+                DATE_FMT,
+            )?;
 
             let top_time = TopTime {
                 age,
@@ -400,6 +423,7 @@ mod tests {
         let first = times.first().unwrap();
         assert_eq!(first.swimmer_name, "Zielinski, Logananne");
         assert!((first.time - 26.58).abs() < 0.01);
+        assert_eq!(first.meet_id.unwrap(), 155477);
 
         let last = times.last().unwrap();
         assert_eq!(last.swimmer_name, "Olson, Kennedy");
