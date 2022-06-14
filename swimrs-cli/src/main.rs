@@ -1,6 +1,7 @@
 mod mirror;
 
 use anyhow::Result;
+use chrono::NaiveDate;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -19,19 +20,22 @@ enum Commands {
 
 #[derive(Args)]
 struct MirrorArgs {
+    /// Starting date in the range to mirror
+    from_date: NaiveDate,
+    /// Ending date in the range to mirror
+    to_date: NaiveDate,
     /// Number of unique HTTP clients to send requests with
     #[clap(long, default_value = "1")]
-    clients: usize,
-    /// If enabled, HTTP requests will not be sent
-    #[clap(long)]
-    dry_run: bool,
+    clients: u16,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
-        Commands::Mirror(_) => mirror::start_mirror().await?,
+        Commands::Mirror(args) => {
+            mirror::start_mirror(args.from_date, args.to_date, args.clients).await?
+        }
     }
     Ok(())
 }
