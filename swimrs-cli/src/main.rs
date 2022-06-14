@@ -31,11 +31,14 @@ struct MirrorArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    pretty_env_logger::init();
+
     let cli = Cli::parse();
     match &cli.command {
         Commands::Mirror(args) => {
             mirror::start_mirror(args.from_date, args.to_date, args.clients).await?
         }
     }
+
     Ok(())
 }

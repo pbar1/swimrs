@@ -1,5 +1,4 @@
 /target
-/results
-*.log
-/tordata
-/.vscode
+**/.vscode
+**/data
+**/results
