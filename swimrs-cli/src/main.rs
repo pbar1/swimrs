@@ -28,6 +28,9 @@ struct MirrorArgs {
     /// Number of unique HTTP clients to send requests with
     #[clap(long, default_value = "1")]
     clients: u16,
+    /// Database URL to save request progress to
+    #[clap(long, default_value = "sqlite://swimrs.db")]
+    db_url: String,
 }
 
 #[tokio::main]
@@ -37,7 +40,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         Commands::Mirror(args) => {
-            mirror::start_mirror(args.from_date, args.to_date, args.clients).await?
+            mirror::start_mirror(args.from_date, args.to_date, args.clients, &args.db_url).await?
         }
     }
 

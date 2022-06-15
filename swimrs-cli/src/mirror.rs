@@ -1,9 +1,10 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_channel::{unbounded, Receiver, Sender};
 use chrono::NaiveDate;
 use futures::future::join_all;
+use log::{debug, error, info};
 use metrics::{decrement_gauge, gauge, histogram, increment_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use reqwest::{ClientBuilder, Proxy};
@@ -15,7 +16,8 @@ use tokio::{
     fs, task,
     time::{sleep, Duration, Instant},
 };
-use tracing::{debug, error, info};
+
+use crate::db::SqliteRequestDb;
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.61/63 Safari/537.36";
 
@@ -23,8 +25,12 @@ pub async fn start_mirror(
     from_date: NaiveDate,
     to_date: NaiveDate,
     num_clients: u16,
+    db_url: &str,
 ) -> Result<()> {
     PrometheusBuilder::new().install()?;
+
+    let db = Arc::new(SqliteRequestDb::new(db_url).await?);
+    db.ensure_schema().await?;
 
     let (req_tx, req_rx) = unbounded();
 
@@ -38,7 +44,7 @@ pub async fn start_mirror(
 
         let req_tx = req_tx.clone();
         let req_rx = req_rx.clone();
-        let h = tokio::spawn(process_requests(client, req_tx, req_rx));
+        let h = tokio::spawn(process_requests(client, req_tx, req_rx, db.clone()));
         handles.push(h);
     }
 
@@ -106,6 +112,7 @@ async fn process_requests(
     client: TopTimesClient,
     req_tx: Sender<TopTimesRequest>,
     req_rx: Receiver<TopTimesRequest>,
+    db: Arc<SqliteRequestDb>,
 ) -> Result<()> {
     client.populate_cookies().await?;
     info!("populated cookies for client: {:?}", client);
@@ -122,14 +129,30 @@ async fn process_requests(
                 continue;
             }
         };
+        let req_id = &req.to_string().to_lowercase();
+
+        // FIXME
+        if db.check_request_success(req_id).await.unwrap() {
+            debug!("already made request: {}", req_id);
+            continue;
+        }
 
         debug!("making request: {}", req);
         let req2 = req.clone();
-        if let Err(e) = process_request(&client, req).await {
-            error!("error processing request {}: {}", req2, e);
-            if let Err(e) = req_tx.send(req2).await {
-                error!("error sending request back into queue, DROPPING: {}", e);
-                continue;
+        match process_request(&client, req).await {
+            Ok(l) => {
+                debug!("found times for {}: {}", req_id, l);
+                db.upsert_request_success(req_id, l, 0f64).await.unwrap(); // FIXME
+            }
+            Err(e) => {
+                error!("error processing request {}: {}", req_id, e);
+                db.upsert_request_error(req_id, &e.to_string(), 0f64)
+                    .await
+                    .unwrap(); // FIXME
+                if let Err(e) = req_tx.send(req2).await {
+                    error!("error sending request back into queue, DROPPING: {}", e);
+                    continue;
+                }
             }
         }
 
@@ -137,13 +160,13 @@ async fn process_requests(
         let delta = end.duration_since(start).as_secs();
         let delay = (rand::random::<f32>() * 5.0 + 5.0) as u64;
         if delta < delay {
-            debug!("waiting for {}", delay - delta);
+            debug!("waiting for {} seconds", delay - delta);
             sleep(Duration::from_secs(delay - delta)).await;
         }
     }
 }
 
-async fn process_request(client: &TopTimesClient, req: TopTimesRequest) -> Result<()> {
+async fn process_request(client: &TopTimesClient, req: TopTimesRequest) -> Result<u32> {
     let req2 = req.clone();
     let html = client.fetch_html(req).await?;
 
@@ -158,8 +181,9 @@ async fn process_request(client: &TopTimesClient, req: TopTimesRequest) -> Resul
 
     debug!("{}: found {} times", req2, times.len());
     if times.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
+    let l = times.len() as u32;
 
     let mut path = PathBuf::new();
     path.push("results");
@@ -174,5 +198,5 @@ async fn process_request(client: &TopTimesClient, req: TopTimesRequest) -> Resul
     }
     writer.flush()?;
 
-    Ok(())
+    Ok(l)
 }

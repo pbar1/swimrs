@@ -1754,6 +1754,7 @@ dependencies = [
  "clap",
  "csv",
  "futures",
+ "log",
  "metrics",
  "metrics-exporter-prometheus",
  "pretty_env_logger",
@@ -1762,7 +1763,6 @@ dependencies = [
  "sqlx",
  "swimrs",
  "tokio",
- "tracing",
 ]
 
 [[package]]
