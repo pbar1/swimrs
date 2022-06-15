@@ -4,14 +4,18 @@ use anyhow::Result;
 use async_channel::{unbounded, Receiver, Sender};
 use chrono::NaiveDate;
 use futures::future::join_all;
-use metrics::gauge;
+use metrics::{decrement_gauge, gauge, histogram, increment_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use reqwest::{ClientBuilder, Proxy};
 use swimrs::{
     common::Gender,
     usas::toptimes::{parse_top_times, TopTimesClient, TopTimesRequest},
 };
-use tracing::{debug, error};
+use tokio::{
+    fs, task,
+    time::{sleep, Duration, Instant},
+};
+use tracing::{debug, error, info};
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.5005.61/63 Safari/537.36";
 
@@ -98,17 +102,18 @@ async fn produce_requests(
     Ok(())
 }
 
-// FIXME: Jitter
 async fn process_requests(
     client: TopTimesClient,
     req_tx: Sender<TopTimesRequest>,
     req_rx: Receiver<TopTimesRequest>,
 ) -> Result<()> {
     client.populate_cookies().await?;
-    debug!("populated cookies for client: {:?}", client);
+    info!("populated cookies for client: {:?}", client);
+    increment_gauge!("swimrs_mirror_ready_clients", 1.0);
 
     loop {
         gauge!("swimrs_mirror_request_queue_depth", req_tx.len() as f64);
+        let start = Instant::now();
 
         let req = match req_rx.recv().await {
             Ok(x) => x,
@@ -120,58 +125,54 @@ async fn process_requests(
 
         debug!("making request: {}", req);
         let req2 = req.clone();
-        let html = match client.fetch_html(req).await {
-            Ok(x) => x,
-            Err(e) => {
-                error!("error making request: {}", e);
-                if let Err(e) = req_tx.send(req2).await {
-                    error!("error sending request back into queue, DROPPING: {}", e);
-                    continue;
-                }
-                continue;
-            }
-        };
-
-        let gender = req2.gender.clone();
-        let res = tokio::task::spawn_blocking(move || parse_top_times(html, gender));
-        let times = match res.await {
-            Ok(x) => x.unwrap(), // FIXME
-            Err(e) => {
-                error!("error parsing top times, DROPPING: {}", e);
-                continue;
-            }
-        };
-
-        debug!("{}: found {} times", req2, times.len());
-        if times.len() < 1 {
-            continue;
-        }
-
-        let mut path = PathBuf::new();
-        path.push("results");
-        path.push(req2.to_string().to_lowercase());
-        if let Err(e) = tokio::fs::create_dir_all(&path).await {
-            error!("error making directory {:?}: {}", path, e);
-            continue;
-        }
-        path.push("results.csv");
-        let mut writer = match csv::Writer::from_path(&path) {
-            Ok(x) => x,
-            Err(e) => {
-                error!("error making csv writer for path {:?}: {}", path, e);
-                continue;
-            }
-        };
-        // TODO: Consider moving this into a blocking thread pool
-        for t in times {
-            if let Err(e) = writer.serialize(t) {
-                error!("error writing csv line: {}", e);
+        if let Err(e) = process_request(&client, req).await {
+            error!("error processing request {}: {}", req2, e);
+            if let Err(e) = req_tx.send(req2).await {
+                error!("error sending request back into queue, DROPPING: {}", e);
                 continue;
             }
         }
-        if let Err(e) = writer.flush() {
-            error!("error flushing csv writer: {}", e);
-            continue;
+
+        let end = Instant::now();
+        let delta = end.duration_since(start).as_secs();
+        let delay = (rand::random::<f32>() * 5.0 + 5.0) as u64;
+        if delta < delay {
+            debug!("waiting for {}", delay - delta);
+            sleep(Duration::from_secs(delay - delta)).await;
         }
     }
+}
+
+async fn process_request(client: &TopTimesClient, req: TopTimesRequest) -> Result<()> {
+    let req2 = req.clone();
+    let html = client.fetch_html(req).await?;
+
+    let gender = req2.gender.clone();
+    increment_gauge!("swimrs_mirror_request_active_count", 1.0);
+    let start = Instant::now();
+    let times = task::spawn_blocking(move || parse_top_times(html, gender)).await??;
+    let end = Instant::now();
+    decrement_gauge!("swimrs_mirror_request_active_count", 1.0);
+    let req_duration = end.duration_since(start).as_secs_f64();
+    histogram!("swimrs_mirror_request_duration", req_duration);
+
+    debug!("{}: found {} times", req2, times.len());
+    if times.is_empty() {
+        return Ok(());
+    }
+
+    let mut path = PathBuf::new();
+    path.push("results");
+    path.push(req2.to_string().to_lowercase());
+    fs::create_dir_all(&path).await?;
+    path.push("results.csv");
+    let mut writer = csv::Writer::from_path(&path)?;
+
+    // TODO: Consider moving this into a blocking thread pool
+    for t in times {
+        writer.serialize(t)?;
+    }
+    writer.flush()?;
+
+    Ok(())
 }
