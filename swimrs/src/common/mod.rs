@@ -3,6 +3,7 @@ use std::str::FromStr;
 use anyhow::{bail, Error, Result};
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use strum::{Display, EnumString};
 use tracing::debug;
 
@@ -14,10 +15,11 @@ pub enum Gender {
     Mixed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Display, TryFromPrimitive)]
+#[derive(Debug, Clone, PartialEq, Serialize_repr, Deserialize_repr, Display, TryFromPrimitive)]
 #[repr(u16)]
 pub enum Distance {
     All = 0,
+    _25 = 25,
     _50 = 50,
     _100 = 100,
     _200 = 200,
@@ -255,7 +257,8 @@ impl FromStr for SwimEvent {
 impl FromStr for SwimTime {
     type Err = Error;
 
-    /// Converts a string like "19.79", "19.79r", "1:04.02", "1:04.02r" to a SwimTime.
+    /// Converts a string like "19.79", "19.79r", "1:04.02", "1:04.02r" to a
+    /// SwimTime.
     fn from_str(s: &str) -> Result<Self> {
         debug!("Converting to SwimTime: {}", s);
 
